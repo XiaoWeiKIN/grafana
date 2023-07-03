@@ -318,7 +318,7 @@ func (st *Manager) setNextState(ctx context.Context, alertRule *ngModels.AlertRu
 			currentState.Image = image
 		}
 	}
-
+	// 更新state
 	st.cache.set(currentState)
 
 	nextState := StateTransition{

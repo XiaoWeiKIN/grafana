@@ -150,6 +150,7 @@ func FromStateTransitionToPostableAlerts(firingStates []StateTransition, stateMa
 		alertState.LastSentAt = ts
 		sentAlerts = append(sentAlerts, alertState.State)
 	}
+
 	stateManager.Put(sentAlerts)
 	return alerts
 }

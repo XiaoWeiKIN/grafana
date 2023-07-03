@@ -16,7 +16,6 @@ import (
 	"github.com/grafana/grafana/pkg/expr/mathexp"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/services/datasources"
-	"github.com/grafana/grafana/pkg/services/featuremgmt"
 )
 
 var (
@@ -266,14 +265,6 @@ func queryDataResponseToResults(ctx context.Context, resp *backend.QueryDataResp
 
 	if response.Error != nil {
 		return "", mathexp.Results{}, QueryError{RefID: refID, Err: response.Error}
-	}
-
-	var dt data.FrameType
-	dt, useDataplane, _ := shouldUseDataplane(response.Frames, logger, s.features.IsEnabled(featuremgmt.FlagDisableSSEDataplane))
-	if useDataplane {
-		logger.Debug("Handling SSE data source query through dataplane", "datatype", dt)
-		result, err := handleDataplaneFrames(ctx, s.tracer, dt, response.Frames)
-		return fmt.Sprintf("dataplane-%s", dt), result, err
 	}
 
 	if isAllFrameVectors(datasourceType, response.Frames) { // Prometheus Specific Handling
