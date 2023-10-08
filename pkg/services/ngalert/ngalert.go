@@ -17,7 +17,6 @@ import (
 	"github.com/grafana/grafana/pkg/infra/kvstore"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/infra/tracing"
-	"github.com/grafana/grafana/pkg/plugins"
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
 	"github.com/grafana/grafana/pkg/services/annotations"
 	"github.com/grafana/grafana/pkg/services/dashboards"
@@ -38,6 +37,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/ngalert/state/historian"
 	"github.com/grafana/grafana/pkg/services/ngalert/store"
 	"github.com/grafana/grafana/pkg/services/notifications"
+	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginstore"
 	"github.com/grafana/grafana/pkg/services/quota"
 	"github.com/grafana/grafana/pkg/services/rendering"
 	"github.com/grafana/grafana/pkg/services/secrets"
@@ -65,7 +65,7 @@ func ProvideService(
 	bus bus.Bus,
 	accesscontrolService accesscontrol.Service,
 	annotationsRepo annotations.Repository,
-	pluginsStore plugins.Store,
+	pluginsStore pluginstore.Store,
 	tracer tracing.Tracer,
 	ruleStore *store.DBstore,
 ) (*AlertNG, error) {
@@ -124,7 +124,7 @@ type AlertNG struct {
 	NotificationService notifications.Service
 	Log                 log.Logger
 	renderService       rendering.Service
-	imageService        image.ImageService
+	ImageService        image.ImageService
 	schedule            schedule.ScheduleService
 	stateManager        *state.Manager
 	folderService       folder.Service
@@ -140,7 +140,7 @@ type AlertNG struct {
 	store                *store.DBstore
 
 	bus          bus.Bus
-	pluginsStore plugins.Store
+	pluginsStore pluginstore.Store
 	tracer       tracing.Tracer
 }
 
@@ -164,7 +164,7 @@ func (ng *AlertNG) init() error {
 	if err != nil {
 		return err
 	}
-	ng.imageService = imageService
+	ng.ImageService = imageService
 
 	// Let's make sure we're able to complete an initial sync of Alertmanagers before we start the alerting components.
 	if err := ng.MultiOrgAlertmanager.LoadAndSyncAlertmanagersForOrgs(initCtx); err != nil {
@@ -202,6 +202,7 @@ func (ng *AlertNG) init() error {
 		Metrics:              ng.Metrics.GetSchedulerMetrics(),
 		AlertSender:          alertsRouter,
 		Tracer:               ng.tracer,
+		Log:                  log.New("ngalert.scheduler"),
 	}
 
 	// There are a set of feature toggles available that act as short-circuits for common configurations.
@@ -212,13 +213,17 @@ func (ng *AlertNG) init() error {
 		return err
 	}
 	cfg := state.ManagerCfg{
-		Metrics:              ng.Metrics.GetStateMetrics(),
-		ExternalURL:          appUrl,
-		InstanceStore:        ng.store,
-		Images:               ng.imageService,
-		Clock:                clk,
-		Historian:            history,
-		DoNotSaveNormalState: ng.FeatureToggles.IsEnabled(featuremgmt.FlagAlertingNoNormalState),
+		Metrics:                        ng.Metrics.GetStateMetrics(),
+		ExternalURL:                    appUrl,
+		InstanceStore:                  ng.store,
+		Images:                         ng.ImageService,
+		Clock:                          clk,
+		Historian:                      history,
+		DoNotSaveNormalState:           ng.FeatureToggles.IsEnabled(featuremgmt.FlagAlertingNoNormalState),
+		MaxStateSaveConcurrency:        ng.Cfg.UnifiedAlerting.MaxStateSaveConcurrency,
+		ApplyNoDataAndErrorToAllStates: ng.FeatureToggles.IsEnabled(featuremgmt.FlagAlertingNoDataErrorExecution),
+		Tracer:                         ng.tracer,
+		Log:                            log.New("ngalert.state.manager"),
 	}
 	stateManager := state.NewManager(cfg)
 	scheduler := schedule.NewScheduler(schedCfg, stateManager)
@@ -233,7 +238,7 @@ func (ng *AlertNG) init() error {
 
 	// Provisioning
 	policyService := provisioning.NewNotificationPolicyService(ng.store, ng.store, ng.store, ng.Cfg.UnifiedAlerting, ng.Log)
-	contactPointService := provisioning.NewContactPointService(ng.store, ng.SecretsService, ng.store, ng.store, ng.Log)
+	contactPointService := provisioning.NewContactPointService(ng.store, ng.SecretsService, ng.store, ng.store, ng.Log, ng.accesscontrol)
 	templateService := provisioning.NewTemplateService(ng.store, ng.store, ng.store, ng.Log)
 	muteTimingService := provisioning.NewMuteTimingService(ng.store, ng.store, ng.store, ng.Log)
 	alertRuleService := provisioning.NewAlertRuleService(ng.store, ng.store, ng.dashboardService, ng.QuotaService, ng.store,
@@ -266,6 +271,7 @@ func (ng *AlertNG) init() error {
 		AppUrl:               appUrl,
 		Historian:            history,
 		Hooks:                api.NewHooks(ng.Log),
+		Tracer:               ng.tracer,
 	}
 	ng.api.RegisterAPIEndpoints(ng.Metrics.GetAPIMetrics())
 
@@ -316,10 +322,6 @@ func (ng *AlertNG) Run(ctx context.Context) error {
 	ng.stateManager.Warm(ctx, ng.store)
 
 	children, subCtx := errgroup.WithContext(ctx)
-
-	children.Go(func() error {
-		return ng.stateManager.Run(subCtx)
-	})
 
 	children.Go(func() error {
 		return ng.MultiOrgAlertmanager.Run(subCtx)
@@ -419,7 +421,8 @@ func configureHistorianBackend(ctx context.Context, cfg setting.UnifiedAlertingS
 		return historian.NewMultipleBackend(primary, secondaries...), nil
 	}
 	if backend == historian.BackendTypeAnnotations {
-		return historian.NewAnnotationBackend(ar, ds, rs, met), nil
+		store := historian.NewAnnotationStore(ar, ds, met)
+		return historian.NewAnnotationBackend(store, rs, met), nil
 	}
 	if backend == historian.BackendTypeLoki {
 		lcfg, err := historian.NewLokiConfig(cfg)

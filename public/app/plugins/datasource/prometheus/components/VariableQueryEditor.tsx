@@ -1,4 +1,3 @@
-import { debounce } from 'lodash';
 import React, { FormEvent, useCallback, useEffect, useState } from 'react';
 
 import { QueryEditorProps, SelectableValue } from '@grafana/data';
@@ -27,6 +26,7 @@ export const variableOptions = [
   { label: 'Metrics', value: QueryType.MetricNames },
   { label: 'Query result', value: QueryType.VarQueryResult },
   { label: 'Series query', value: QueryType.SeriesQuery },
+  { label: 'Classic query', value: QueryType.ClassicQuery },
 ];
 
 export type Props = QueryEditorProps<PrometheusDatasource, PromQuery, PromOptions, PromVariableQuery>;
@@ -36,9 +36,11 @@ const refId = 'PrometheusVariableQueryEditor-VariableQuery';
 export const PromVariableQueryEditor = ({ onChange, query, datasource }: Props) => {
   // to select the query type, i.e. label_names, label_values, etc.
   const [qryType, setQryType] = useState<number | undefined>(undefined);
-
   // list of variables for each function
   const [label, setLabel] = useState('');
+
+  const [labelNamesMatch, setLabelNamesMatch] = useState('');
+
   // metric is used for both label_values() and metric()
   // label_values() metric requires a whole/complete metric
   // metric() is expected to be a part of a metric string
@@ -47,6 +49,9 @@ export const PromVariableQueryEditor = ({ onChange, query, datasource }: Props) 
   const [varQuery, setVarQuery] = useState('');
   // seriesQuery is only a whole
   const [seriesQuery, setSeriesQuery] = useState('');
+
+  // the original variable query implementation
+  const [classicQuery, setClassicQuery] = useState('');
 
   // list of label names for label_values(), /api/v1/labels, contains the same results as label_names() function
   const [labelOptions, setLabelOptions] = useState<Array<SelectableValue<string>>>([]);
@@ -58,16 +63,24 @@ export const PromVariableQueryEditor = ({ onChange, query, datasource }: Props) 
     if (!query) {
       return;
     }
-    // 1. Changing from standard to custom variable editor changes the string attr from expr to query
-    // 2. jsonnet grafana as code passes a variable as a string
-    const variableQuery = variableMigration(query);
 
-    setQryType(variableQuery.qryType);
-    setLabel(variableQuery.label ?? '');
-    setMetric(variableQuery.metric ?? '');
-    setLabelFilters(query.labelFilters ?? []);
-    setVarQuery(variableQuery.varQuery ?? '');
-    setSeriesQuery(variableQuery.seriesQuery ?? '');
+    if (query.qryType === QueryType.ClassicQuery) {
+      setQryType(query.qryType);
+      setClassicQuery(query.query ?? '');
+    } else {
+      // 1. Changing from standard to custom variable editor changes the string attr from expr to query
+      // 2. jsonnet grafana as code passes a variable as a string
+      const variableQuery = variableMigration(query);
+
+      setLabelNamesMatch(variableQuery.match ?? '');
+      setQryType(variableQuery.qryType);
+      setLabel(variableQuery.label ?? '');
+      setMetric(variableQuery.metric ?? '');
+      setLabelFilters(variableQuery.labelFilters ?? []);
+      setVarQuery(variableQuery.varQuery ?? '');
+      setSeriesQuery(variableQuery.seriesQuery ?? '');
+      setClassicQuery(variableQuery.classicQuery ?? '');
+    }
   }, [query]);
 
   // set the label names options for the label values var query
@@ -78,7 +91,7 @@ export const PromVariableQueryEditor = ({ onChange, query, datasource }: Props) 
     const variables = datasource.getVariables().map((variable: string) => ({ label: variable, value: variable }));
     if (!metric) {
       // get all the labels
-      datasource.getTagKeys().then((labelNames: Array<{ text: string }>) => {
+      datasource.getTagKeys({ filters: [] }).then((labelNames: Array<{ text: string }>) => {
         const names = labelNames.map(({ text }) => ({ label: text, value: text }));
         setLabelOptions([...variables, ...names]);
       });
@@ -111,21 +124,23 @@ export const PromVariableQueryEditor = ({ onChange, query, datasource }: Props) 
       qryType,
       label,
       metric,
+      match: labelNamesMatch,
       varQuery,
       seriesQuery,
+      classicQuery,
       refId: 'PrometheusVariableQueryEditor-VariableQuery',
     };
 
-    const updatedVar = { ...queryVar, ...updateVar };
+    let updateLabelFilters = updLabelFilters ? { labelFilters: updLabelFilters } : { labelFilters: labelFilters };
+
+    const updatedVar = { ...queryVar, ...updateVar, ...updateLabelFilters };
 
     const queryString = migrateVariableEditorBackToVariableSupport(updatedVar);
-
-    const lblFltrs = updLabelFilters ? updLabelFilters : labelFilters;
 
     // setting query.query property allows for update of variable definition
     onChange({
       query: queryString,
-      labelFilters: lblFltrs,
+      qryType: updatedVar.qryType,
       refId,
     });
   };
@@ -133,8 +148,8 @@ export const PromVariableQueryEditor = ({ onChange, query, datasource }: Props) 
   /** Call onchange for label names query type change */
   const onQueryTypeChange = (newType: SelectableValue<QueryType>) => {
     setQryType(newType.value);
-    if (newType.value === QueryType.LabelNames) {
-      onChangeWithVariableString({ qryType: newType.value });
+    if (newType.value !== QueryType.SeriesQuery) {
+      onChangeWithVariableString({ qryType: newType.value ?? 0 });
     }
   };
 
@@ -164,15 +179,21 @@ export const PromVariableQueryEditor = ({ onChange, query, datasource }: Props) 
     }
   };
 
+  const onLabelNamesMatchChange = (regex: string) => {
+    if (qryType === QueryType.LabelNames) {
+      onChangeWithVariableString({ qryType, match: regex });
+    }
+  };
+
   /**
    * Call onchange for metric change if metrics names (regex) query type
    * Debounce this because to not call the API for every keystroke.
    */
-  const onMetricChange = debounce((value: string) => {
+  const onMetricChange = (value: string) => {
     if (qryType === QueryType.MetricNames && value) {
       onChangeWithVariableString({ metric: value });
     }
-  }, 300);
+  };
 
   /**
    *  Do not call onchange for variable query result when query type is var query result
@@ -190,6 +211,10 @@ export const PromVariableQueryEditor = ({ onChange, query, datasource }: Props) 
    */
   const onSeriesQueryChange = (e: FormEvent<HTMLInputElement>) => {
     setSeriesQuery(e.currentTarget.value);
+  };
+
+  const onClassicQueryChange = (e: FormEvent<HTMLInputElement>) => {
+    setClassicQuery(e.currentTarget.value);
   };
 
   const promVisualQuery = useCallback(() => {
@@ -252,19 +277,49 @@ export const PromVariableQueryEditor = ({ onChange, query, datasource }: Props) 
         </>
       )}
 
+      {qryType === QueryType.LabelNames && (
+        <InlineFieldRow>
+          <InlineField
+            label="Metric regex"
+            labelWidth={20}
+            aria-labelledby="Metric regex"
+            tooltip={<div>Returns a list of label names, optionally filtering by specified metric regex.</div>}
+          >
+            <Input
+              type="text"
+              aria-label="Metric regex"
+              placeholder="Metric regex"
+              value={labelNamesMatch}
+              onBlur={(event) => {
+                setLabelNamesMatch(event.currentTarget.value);
+                onLabelNamesMatchChange(event.currentTarget.value);
+              }}
+              onChange={(e) => {
+                setLabelNamesMatch(e.currentTarget.value);
+              }}
+              width={25}
+            />
+          </InlineField>
+        </InlineFieldRow>
+      )}
+
       {qryType === QueryType.MetricNames && (
         <InlineFieldRow>
           <InlineField
             label="Metric regex"
             labelWidth={20}
+            aria-labelledby="Metric selector"
             tooltip={<div>Returns a list of metrics matching the specified metric regex.</div>}
           >
             <Input
               type="text"
               aria-label="Metric selector"
-              placeholder="Metric Regex"
+              placeholder="Metric regex"
               value={metric}
               onChange={(e) => {
+                setMetric(e.currentTarget.value);
+              }}
+              onBlur={(e) => {
                 setMetric(e.currentTarget.value);
                 onMetricChange(e.currentTarget.value);
               }}
@@ -325,6 +380,35 @@ export const PromVariableQueryEditor = ({ onChange, query, datasource }: Props) 
               onChange={onSeriesQueryChange}
               onBlur={() => {
                 if (qryType === QueryType.SeriesQuery && seriesQuery) {
+                  onChangeWithVariableString({ qryType });
+                }
+              }}
+              width={100}
+            />
+          </InlineField>
+        </InlineFieldRow>
+      )}
+
+      {qryType === QueryType.ClassicQuery && (
+        <InlineFieldRow>
+          <InlineField
+            label="Classic Query"
+            labelWidth={20}
+            tooltip={
+              <div>
+                The original implemetation of the Prometheus variable query editor. Enter a string with the correct
+                query type and parameters as described in these docs. For example, label_values(label, metric).
+              </div>
+            }
+          >
+            <Input
+              type="text"
+              aria-label="Classic Query"
+              placeholder="Classic Query"
+              value={classicQuery}
+              onChange={onClassicQueryChange}
+              onBlur={() => {
+                if (qryType === QueryType.ClassicQuery && classicQuery) {
                   onChangeWithVariableString({ qryType });
                 }
               }}

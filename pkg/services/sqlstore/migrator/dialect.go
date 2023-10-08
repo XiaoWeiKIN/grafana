@@ -2,6 +2,7 @@ package migrator
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"xorm.io/xorm"
@@ -46,8 +47,8 @@ type Dialect interface {
 
 	UpdateTableSQL(tableName string, columns []*Column) string
 
-	IndexCheckSQL(tableName, indexName string) (string, []interface{})
-	ColumnCheckSQL(tableName, columnName string) (string, []interface{})
+	IndexCheckSQL(tableName, indexName string) (string, []any)
+	ColumnCheckSQL(tableName, columnName string) (string, []any)
 	// UpsertSQL returns the upsert sql statement for a dialect
 	UpsertSQL(tableName string, keyCols, updateCols []string) string
 	UpsertMultipleSQL(tableName string, keyCols, updateCols []string, count int) (string, error)
@@ -129,6 +130,14 @@ func (b *BaseDialect) EqStr() string {
 }
 
 func (b *BaseDialect) Default(col *Column) string {
+	if col.Type == DB_Bool {
+		// Ensure that all dialects support the same literals in the same way.
+		bl, err := strconv.ParseBool(col.Default)
+		if err != nil {
+			panic(fmt.Errorf("failed to create default value for column '%s': invalid boolean default value '%s'", col.Name, col.Default))
+		}
+		return b.dialect.BooleanStr(bl)
+	}
 	return col.Default
 }
 
@@ -226,7 +235,7 @@ func (b *BaseDialect) RenameColumn(table Table, column *Column, newName string) 
 	)
 }
 
-func (b *BaseDialect) ColumnCheckSQL(tableName, columnName string) (string, []interface{}) {
+func (b *BaseDialect) ColumnCheckSQL(tableName, columnName string) (string, []any) {
 	return "", nil
 }
 

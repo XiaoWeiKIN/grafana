@@ -11,11 +11,11 @@ import { selectors as e2eSelectors } from '@grafana/e2e-selectors/src';
 import { backendSrv } from 'app/core/services/backend_srv';
 import { contextSrv } from 'app/core/services/context_srv';
 
-import { ListPublicDashboardResponse } from '../../types';
+import { PublicDashboardListResponse, PublicDashboardListWithPaginationResponse } from '../../types';
 
 import { PublicDashboardListTable } from './PublicDashboardListTable';
 
-const publicDashboardListResponse: ListPublicDashboardResponse[] = [
+const publicDashboardListResponse: PublicDashboardListResponse[] = [
   {
     uid: 'SdZwuCZVz',
     accessToken: 'beeaf92f6ab3467f80b2be922c7741ab',
@@ -32,7 +32,7 @@ const publicDashboardListResponse: ListPublicDashboardResponse[] = [
   },
 ];
 
-const orphanedDashboardListResponse: ListPublicDashboardResponse[] = [
+const orphanedDashboardListResponse: PublicDashboardListResponse[] = [
   {
     uid: 'SdZwuCZVz2',
     accessToken: 'beeaf92f6ab3467f80b2be922c7741ab',
@@ -49,9 +49,15 @@ const orphanedDashboardListResponse: ListPublicDashboardResponse[] = [
   },
 ];
 
+const paginationResponse: Omit<PublicDashboardListWithPaginationResponse, 'publicDashboards'> = {
+  page: 1,
+  perPage: 50,
+  totalCount: 50,
+};
+
 const server = setupServer(
   rest.get('/api/dashboards/public-dashboards', (_, res, ctx) =>
-    res(ctx.status(200), ctx.json(publicDashboardListResponse))
+    res(ctx.status(200), ctx.json({ ...paginationResponse, publicDashboards: publicDashboardListResponse }))
   ),
   rest.delete('/api/dashboards/uid/:dashboardUid/public-dashboards/:uid', (_, res, ctx) => res(ctx.status(200)))
 );
@@ -104,9 +110,16 @@ describe('Show table', () => {
     expect(screen.getAllByRole('listitem')).toHaveLength(publicDashboardListResponse.length);
   });
   it('renders empty list', async () => {
+    const emptyListRS: PublicDashboardListWithPaginationResponse = {
+      publicDashboards: [],
+      totalCount: 0,
+      page: 1,
+      perPage: 50,
+    };
+
     server.use(
       rest.get('/api/dashboards/public-dashboards', (req, res, ctx) => {
-        return res(ctx.status(200), ctx.json([]));
+        return res(ctx.status(200), ctx.json(emptyListRS));
       })
     );
 
@@ -115,7 +128,7 @@ describe('Show table', () => {
     expect(screen.queryAllByRole('listitem')).toHaveLength(0);
   });
   it('renders public dashboards in a good way without trashcan', async () => {
-    jest.spyOn(contextSrv, 'hasAccess').mockReturnValue(false);
+    jest.spyOn(contextSrv, 'hasPermission').mockReturnValue(false);
 
     await renderPublicDashboardTable(true);
     publicDashboardListResponse.forEach((pd, idx) => {
@@ -123,7 +136,7 @@ describe('Show table', () => {
     });
   });
   it('renders public dashboards in a good way with trashcan', async () => {
-    jest.spyOn(contextSrv, 'hasAccess').mockReturnValue(true);
+    jest.spyOn(contextSrv, 'hasPermission').mockReturnValue(true);
 
     await renderPublicDashboardTable(true);
     publicDashboardListResponse.forEach((pd, idx) => {
@@ -134,13 +147,13 @@ describe('Show table', () => {
 
 describe('Delete public dashboard', () => {
   it('when user does not have public dashboard write permissions, then dashboards are listed without delete button', async () => {
-    jest.spyOn(contextSrv, 'hasAccess').mockReturnValue(false);
+    jest.spyOn(contextSrv, 'hasPermission').mockReturnValue(false);
     await renderPublicDashboardTable(true);
 
     expect(screen.queryAllByTestId(selectors.ListItem.trashcanButton)).toHaveLength(0);
   });
   it('when user has public dashboard write permissions, then dashboards are listed with delete button', async () => {
-    jest.spyOn(contextSrv, 'hasAccess').mockReturnValue(true);
+    jest.spyOn(contextSrv, 'hasPermission').mockReturnValue(true);
     await renderPublicDashboardTable(true);
 
     expect(screen.getAllByTestId(selectors.ListItem.trashcanButton)).toHaveLength(publicDashboardListResponse.length);
@@ -149,22 +162,25 @@ describe('Delete public dashboard', () => {
 
 describe('Orphaned public dashboard', () => {
   it('renders orphaned and non orphaned public dashboards items correctly', async () => {
-    const response = [...publicDashboardListResponse, ...orphanedDashboardListResponse];
+    const response: PublicDashboardListWithPaginationResponse = {
+      ...paginationResponse,
+      publicDashboards: [...publicDashboardListResponse, ...orphanedDashboardListResponse],
+    };
     server.use(
       rest.get('/api/dashboards/public-dashboards', (req, res, ctx) => {
         return res(ctx.status(200), ctx.json(response));
       })
     );
-    jest.spyOn(contextSrv, 'hasAccess').mockReturnValue(true);
+    jest.spyOn(contextSrv, 'hasPermission').mockReturnValue(true);
 
     await renderPublicDashboardTable(true);
-    response.forEach((pd, idx) => {
+    response.publicDashboards.forEach((pd, idx) => {
       renderPublicDashboardItemCorrectly(pd, idx, true);
     });
   });
 });
 
-const renderPublicDashboardItemCorrectly = (pd: ListPublicDashboardResponse, idx: number, hasWriteAccess: boolean) => {
+const renderPublicDashboardItemCorrectly = (pd: PublicDashboardListResponse, idx: number, hasWriteAccess: boolean) => {
   const isOrphaned = !pd.dashboardUid;
 
   const cardItems = screen.getAllByRole('listitem');

@@ -1,4 +1,4 @@
-import { omit } from 'lodash';
+import { nanoid } from '@reduxjs/toolkit';
 import { Unsubscribable } from 'rxjs';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -16,26 +16,21 @@ import {
   LogsSortOrder,
   rangeUtil,
   RawTimeRange,
+  ScopedVars,
   TimeRange,
   TimeZone,
+  toURLRange,
   urlUtil,
 } from '@grafana/data';
-import { DataSourceSrv, getDataSourceSrv } from '@grafana/runtime';
+import { getDataSourceSrv } from '@grafana/runtime';
 import { RefreshPicker } from '@grafana/ui';
 import store from 'app/core/store';
-import { TimeSrv } from 'app/features/dashboard/services/TimeSrv';
-import { PanelModel } from 'app/features/dashboard/state';
 import { ExpressionDatasourceUID } from 'app/features/expressions/types';
-import { ExploreId, QueryOptions, QueryTransaction } from 'app/types/explore';
+import { QueryOptions, QueryTransaction } from 'app/types/explore';
 
 import { config } from '../config';
 
 import { getNextRefIdChar } from './query';
-
-export const DEFAULT_RANGE = {
-  from: 'now-1h',
-  to: 'now',
-};
 
 export const DEFAULT_UI_STATE = {
   dedupStrategy: LogsDedupStrategy.none,
@@ -51,80 +46,61 @@ export const setLastUsedDatasourceUID = (orgId: number, datasourceUID: string) =
   store.setObject(lastUsedDatasourceKeyForOrgId(orgId), datasourceUID);
 
 export interface GetExploreUrlArguments {
-  panel: PanelModel;
-  /** Datasource service to query other datasources in case the panel datasource is mixed */
-  datasourceSrv: DataSourceSrv;
-  /** Time service to get the current dashboard range from */
-  timeSrv: TimeSrv;
+  queries: DataQuery[];
+  dsRef: DataSourceRef | null | undefined;
+  timeRange: TimeRange;
+  scopedVars: ScopedVars | undefined;
+}
+
+export function generateExploreId() {
+  return nanoid(3);
 }
 
 /**
  * Returns an Explore-URL that contains a panel's queries and the dashboard time range.
  */
 export async function getExploreUrl(args: GetExploreUrlArguments): Promise<string | undefined> {
-  const { panel, datasourceSrv, timeSrv } = args;
-  let exploreDatasource = await datasourceSrv.get(panel.datasource);
+  const { queries, dsRef, timeRange, scopedVars } = args;
+  let exploreDatasource = await getDataSourceSrv().get(dsRef);
 
-  /** In Explore, we don't have legend formatter and we don't want to keep
-   * legend formatting as we can't change it
-   *
-   * We also don't have expressions, so filter those out
+  /*
+   * Explore does not support expressions so filter those out
    */
-  let exploreTargets: DataQuery[] = panel.targets
-    .map((t) => omit(t, 'legendFormat'))
-    .filter((t) => t.datasource?.uid !== ExpressionDatasourceUID);
+  let exploreTargets: DataQuery[] = queries.filter((t) => t.datasource?.uid !== ExpressionDatasourceUID);
+
   let url: string | undefined;
-  // if the mixed datasource is not enabled for explore, choose only one datasource
-  if (
-    config.featureToggles.exploreMixedDatasource === false &&
-    exploreDatasource.meta?.id === 'mixed' &&
-    exploreTargets
-  ) {
-    // Find first explore datasource among targets
-    for (const t of exploreTargets) {
-      const datasource = await datasourceSrv.get(t.datasource || undefined);
-      if (datasource) {
-        exploreDatasource = datasource;
-        exploreTargets = panel.targets.filter((t) => t.datasource === datasource.name);
-        break;
-      }
-    }
-  }
 
   if (exploreDatasource) {
-    const range = timeSrv.timeRangeForUrl();
-    let state: Partial<ExploreUrlState> = { range };
+    let state: Partial<ExploreUrlState> = { range: toURLRange(timeRange.raw) };
     if (exploreDatasource.interpolateVariablesInQueries) {
-      const scopedVars = panel.scopedVars || {};
       state = {
         ...state,
-        datasource: exploreDatasource.name,
-        context: 'explore',
-        queries: exploreDatasource.interpolateVariablesInQueries(exploreTargets, scopedVars),
+        datasource: exploreDatasource.uid,
+        queries: exploreDatasource.interpolateVariablesInQueries(exploreTargets, scopedVars ?? {}),
       };
     } else {
       state = {
         ...state,
-        datasource: exploreDatasource.name,
-        context: 'explore',
+        datasource: exploreDatasource.uid,
         queries: exploreTargets,
       };
     }
 
-    const exploreState = JSON.stringify(state);
-    url = urlUtil.renderUrl('/explore', { left: exploreState });
+    const exploreState = JSON.stringify({ [generateExploreId()]: state });
+    url = urlUtil.renderUrl('/explore', { panes: exploreState, schemaVersion: 1 });
   }
 
   return url;
 }
 
 export function buildQueryTransaction(
-  exploreId: ExploreId,
+  exploreId: string,
   queries: DataQuery[],
   queryOptions: QueryOptions,
   range: TimeRange,
   scanning: boolean,
-  timeZone?: TimeZone
+  timeZone?: TimeZone,
+  scopedVars?: ScopedVars
 ): QueryTransaction {
   const key = queries.reduce((combinedKey, query) => {
     combinedKey += query.key;
@@ -156,6 +132,7 @@ export function buildQueryTransaction(
     scopedVars: {
       __interval: { text: interval, value: interval },
       __interval_ms: { text: intervalMs, value: intervalMs },
+      ...scopedVars,
     },
     maxDataPoints: queryOptions.maxDataPoints,
     liveStreaming: queryOptions.liveStreaming,
@@ -171,16 +148,6 @@ export function buildQueryTransaction(
 }
 
 export const clearQueryKeys: (query: DataQuery) => DataQuery = ({ key, ...rest }) => rest;
-
-const isSegment = (segment: { [key: string]: string }, ...props: string[]) =>
-  props.some((prop) => segment.hasOwnProperty(prop));
-
-enum ParseUrlStateIndex {
-  RangeFrom = 0,
-  RangeTo = 1,
-  Datasource = 2,
-  SegmentsStart = 3,
-}
 
 export const safeParseJson = (text?: string): any | undefined => {
   if (!text) {
@@ -207,40 +174,6 @@ export const safeStringifyValue = (value: unknown, space?: number) => {
 
   return '';
 };
-
-export function parseUrlState(initial: string | undefined): ExploreUrlState {
-  const parsed = safeParseJson(initial);
-  const errorResult: any = {
-    datasource: null,
-    queries: [],
-    range: DEFAULT_RANGE,
-    mode: null,
-  };
-
-  if (!parsed) {
-    return errorResult;
-  }
-
-  if (!Array.isArray(parsed)) {
-    return { queries: [], range: DEFAULT_RANGE, ...parsed };
-  }
-
-  if (parsed.length <= ParseUrlStateIndex.SegmentsStart) {
-    console.error('Error parsing compact URL state for Explore.');
-    return errorResult;
-  }
-
-  const range = {
-    from: parsed[ParseUrlStateIndex.RangeFrom],
-    to: parsed[ParseUrlStateIndex.RangeTo],
-  };
-  const datasource = parsed[ParseUrlStateIndex.Datasource];
-  const parsedSegments = parsed.slice(ParseUrlStateIndex.SegmentsStart);
-  const queries = parsedSegments.filter((segment) => !isSegment(segment, 'ui', 'mode', '__panelsState'));
-
-  const panelsState = parsedSegments.find((segment) => isSegment(segment, '__panelsState'))?.__panelsState;
-  return { datasource, queries, range, panelsState };
-}
 
 export function generateKey(index = 0): string {
   return `Q-${uuidv4()}-${index}`;

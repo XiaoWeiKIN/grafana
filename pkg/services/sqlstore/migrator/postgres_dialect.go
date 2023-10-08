@@ -46,16 +46,6 @@ func (db *PostgresDialect) BatchSize() int {
 	return 1000
 }
 
-func (db *PostgresDialect) Default(col *Column) string {
-	if col.Type == DB_Bool {
-		if col.Default == "0" {
-			return "FALSE"
-		}
-		return "TRUE"
-	}
-	return col.Default
-}
-
 func (db *PostgresDialect) SQLType(c *Column) string {
 	var res string
 	switch t := c.Type; t {
@@ -106,8 +96,8 @@ func (db *PostgresDialect) SQLType(c *Column) string {
 	return res
 }
 
-func (db *PostgresDialect) IndexCheckSQL(tableName, indexName string) (string, []interface{}) {
-	args := []interface{}{tableName, indexName}
+func (db *PostgresDialect) IndexCheckSQL(tableName, indexName string) (string, []any) {
+	args := []any{tableName, indexName}
 	sql := "SELECT 1 FROM " + db.Quote("pg_indexes") + " WHERE" + db.Quote("tablename") + "=? AND " + db.Quote("indexname") + "=?"
 	return sql, args
 }

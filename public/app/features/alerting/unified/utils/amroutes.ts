@@ -3,7 +3,6 @@ import { uniqueId } from 'lodash';
 import { SelectableValue } from '@grafana/data';
 import { MatcherOperator, ObjectMatcher, Route, RouteWithID } from 'app/plugins/datasource/alertmanager/types';
 
-import { safeParseDurationstr } from '../components/rules/EditRuleGroupModal';
 import { FormAmRoute } from '../types/amroutes';
 import { MatcherFieldValue } from '../types/silence-form';
 
@@ -11,7 +10,7 @@ import { matcherToMatcherField } from './alertmanager';
 import { GRAFANA_RULES_SOURCE_NAME } from './datasource';
 import { normalizeMatchers, parseMatcher } from './matchers';
 import { findExistingRoute } from './routeTree';
-import { isValidPrometheusDuration } from './time';
+import { isValidPrometheusDuration, safeParseDurationstr } from './time';
 
 const matchersToArrayFieldMatchers = (
   matchers: Record<string, string> | undefined,
@@ -26,7 +25,7 @@ const matchersToArrayFieldMatchers = (
         operator: isRegex ? MatcherOperator.regex : MatcherOperator.equal,
       },
     ],
-    [] as MatcherFieldValue[]
+    []
   );
 
 const selectableValueToString = (selectableValue: SelectableValue<string>): string => selectableValue.value!;
@@ -150,9 +149,9 @@ export const formAmRouteToAmRoute = (
 
   const overrideRepeatInterval = overrideTimings && repeatIntervalValue;
   const repeat_interval = overrideRepeatInterval ? repeatIntervalValue : INHERIT_FROM_PARENT;
-  const object_matchers = formAmRoute.object_matchers
+  const object_matchers: ObjectMatcher[] | undefined = formAmRoute.object_matchers
     ?.filter((route) => route.name && route.value && route.operator)
-    .map(({ name, operator, value }) => [name, operator, value] as ObjectMatcher);
+    .map(({ name, operator, value }) => [name, operator, value]);
 
   const routes = formAmRoute.routes?.map((subRoute) =>
     formAmRouteToAmRoute(alertManagerSourceName, subRoute, routeTree)
@@ -229,6 +228,14 @@ export function promDurationValidator(duration: string) {
 
   return isValidPrometheusDuration(duration) || 'Invalid duration format. Must be {number}{time_unit}';
 }
+
+// function to convert ObjectMatchers to a array of strings
+export const objectMatchersToString = (matchers: ObjectMatcher[]): string[] => {
+  return matchers.map((matcher) => {
+    const [name, operator, value] = matcher;
+    return `${name}${operator}${value}`;
+  });
+};
 
 export const repeatIntervalValidator = (repeatInterval: string, groupInterval: string) => {
   if (repeatInterval.length === 0) {

@@ -1,15 +1,15 @@
 import React, { useState } from 'react';
 
-import { locationService, reportInteraction } from '@grafana/runtime';
+import { config, locationService, reportInteraction } from '@grafana/runtime';
 import { Button, Drawer, Dropdown, Icon, Menu, MenuItem } from '@grafana/ui';
 import { Permissions } from 'app/core/components/AccessControl';
-import { appEvents, contextSrv } from 'app/core/core';
-import { AccessControlAction, FolderDTO, useDispatch } from 'app/types';
+import { appEvents } from 'app/core/core';
+import { t, Trans } from 'app/core/internationalization';
+import { FolderDTO } from 'app/types';
 import { ShowModalReactEvent } from 'app/types/events';
 
-import { useMoveFolderMutation } from '../api/browseDashboardsAPI';
-import { PAGE_SIZE, ROOT_PAGE_SIZE } from '../api/services';
-import { deleteFolder, refetchChildren } from '../state';
+import { useDeleteFolderMutation, useMoveFolderMutation } from '../api/browseDashboardsAPI';
+import { getFolderPermissions } from '../permissions';
 
 import { DeleteModal } from './BrowseActions/DeleteModal';
 import { MoveModal } from './BrowseActions/MoveModal';
@@ -19,17 +19,16 @@ interface Props {
 }
 
 export function FolderActionsButton({ folder }: Props) {
-  const dispatch = useDispatch();
   const [isOpen, setIsOpen] = useState(false);
   const [showPermissionsDrawer, setShowPermissionsDrawer] = useState(false);
   const [moveFolder] = useMoveFolderMutation();
-  const canViewPermissions = contextSrv.hasPermission(AccessControlAction.FoldersPermissionsRead);
-  const canSetPermissions = contextSrv.hasPermission(AccessControlAction.FoldersPermissionsWrite);
-  const canMoveFolder = contextSrv.hasPermission(AccessControlAction.FoldersWrite);
-  const canDeleteFolder = contextSrv.hasPermission(AccessControlAction.FoldersDelete);
+  const [deleteFolder] = useDeleteFolderMutation();
+  const { canEditFolders, canDeleteFolders, canViewPermissions, canSetPermissions } = getFolderPermissions(folder);
+  // Can only move folders when nestedFolders is enabled
+  const canMoveFolder = config.featureToggles.nestedFolders && canEditFolders;
 
   const onMove = async (destinationUID: string) => {
-    await moveFolder({ folderUID: folder.uid, destinationUID });
+    await moveFolder({ folder, destinationUID });
     reportInteraction('grafana_manage_dashboards_item_moved', {
       item_counts: {
         folder: 1,
@@ -37,17 +36,10 @@ export function FolderActionsButton({ folder }: Props) {
       },
       source: 'folder_actions',
     });
-    dispatch(refetchChildren({ parentUID: destinationUID, pageSize: destinationUID ? PAGE_SIZE : ROOT_PAGE_SIZE }));
-
-    if (folder.parentUid) {
-      dispatch(
-        refetchChildren({ parentUID: folder.parentUid, pageSize: folder.parentUid ? PAGE_SIZE : ROOT_PAGE_SIZE })
-      );
-    }
   };
 
   const onDelete = async () => {
-    await dispatch(deleteFolder(folder.uid));
+    await deleteFolder(folder);
     reportInteraction('grafana_manage_dashboards_item_deleted', {
       item_counts: {
         folder: 1,
@@ -55,12 +47,9 @@ export function FolderActionsButton({ folder }: Props) {
       },
       source: 'folder_actions',
     });
-    if (folder.parentUid) {
-      dispatch(
-        refetchChildren({ parentUID: folder.parentUid, pageSize: folder.parentUid ? PAGE_SIZE : ROOT_PAGE_SIZE })
-      );
-    }
-    locationService.push('/dashboards');
+    const { parents } = folder;
+    const parentUrl = parents && parents.length ? parents[parents.length - 1].url : '/dashboards';
+    locationService.push(parentUrl);
   };
 
   const showMoveModal = () => {
@@ -97,15 +86,19 @@ export function FolderActionsButton({ folder }: Props) {
     );
   };
 
+  const managePermissionsLabel = t('browse-dashboards.folder-actions-button.manage-permissions', 'Manage permissions');
+  const moveLabel = t('browse-dashboards.folder-actions-button.move', 'Move');
+  const deleteLabel = t('browse-dashboards.folder-actions-button.delete', 'Delete');
+
   const menu = (
     <Menu>
-      {canViewPermissions && <MenuItem onClick={() => setShowPermissionsDrawer(true)} label="Manage permissions" />}
-      {canMoveFolder && <MenuItem onClick={showMoveModal} label="Move" />}
-      {canDeleteFolder && <MenuItem destructive onClick={showDeleteModal} label="Delete" />}
+      {canViewPermissions && <MenuItem onClick={() => setShowPermissionsDrawer(true)} label={managePermissionsLabel} />}
+      {canMoveFolder && <MenuItem onClick={showMoveModal} label={moveLabel} />}
+      {canDeleteFolders && <MenuItem destructive onClick={showDeleteModal} label={deleteLabel} />}
     </Menu>
   );
 
-  if (!canViewPermissions && !canMoveFolder && !canDeleteFolder) {
+  if (!canViewPermissions && !canMoveFolder && !canDeleteFolders) {
     return null;
   }
 
@@ -113,15 +106,14 @@ export function FolderActionsButton({ folder }: Props) {
     <>
       <Dropdown overlay={menu} onVisibleChange={setIsOpen}>
         <Button variant="secondary">
-          Folder actions
+          <Trans i18nKey="browse-dashboards.folder-actions-button.folder-actions">Folder actions</Trans>
           <Icon name={isOpen ? 'angle-up' : 'angle-down'} />
         </Button>
       </Dropdown>
       {showPermissionsDrawer && (
         <Drawer
-          title="Permissions"
+          title={t('browse-dashboards.action.manage-permissions-button', 'Manage permissions')}
           subtitle={folder.title}
-          scrollableContent
           onClose={() => setShowPermissionsDrawer(false)}
           size="md"
         >

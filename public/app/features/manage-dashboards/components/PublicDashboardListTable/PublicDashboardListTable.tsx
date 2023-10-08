@@ -1,11 +1,22 @@
 import { css } from '@emotion/css';
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useMedia } from 'react-use';
 
 import { GrafanaTheme2 } from '@grafana/data/src';
 import { selectors as e2eSelectors } from '@grafana/e2e-selectors/src';
 import { reportInteraction } from '@grafana/runtime';
-import { LinkButton, useStyles2, Spinner, Card, useTheme2, Tooltip, Icon, Switch } from '@grafana/ui/src';
+import {
+  LinkButton,
+  useStyles2,
+  Spinner,
+  Card,
+  useTheme2,
+  Tooltip,
+  Icon,
+  Switch,
+  Pagination,
+  HorizontalGroup,
+} from '@grafana/ui/src';
 import { Page } from 'app/core/components/Page/Page';
 import { contextSrv } from 'app/core/services/context_srv';
 import {
@@ -16,14 +27,13 @@ import {
   generatePublicDashboardConfigUrl,
   generatePublicDashboardUrl,
 } from 'app/features/dashboard/components/ShareModal/SharePublicDashboard/SharePublicDashboardUtils';
-import { isOrgAdmin } from 'app/features/plugins/admin/permissions';
 import { AccessControlAction } from 'app/types';
 
-import { ListPublicDashboardResponse } from '../../types';
+import { PublicDashboardListResponse } from '../../types';
 
 import { DeletePublicDashboardButton } from './DeletePublicDashboardButton';
 
-const PublicDashboardCard = ({ pd }: { pd: ListPublicDashboardResponse }) => {
+const PublicDashboardCard = ({ pd }: { pd: PublicDashboardListResponse }) => {
   const styles = useStyles2(getStyles);
   const theme = useTheme2();
   const isMobile = useMedia(`(max-width: ${theme.breakpoints.values.sm}px)`);
@@ -31,10 +41,10 @@ const PublicDashboardCard = ({ pd }: { pd: ListPublicDashboardResponse }) => {
   const [update, { isLoading: isUpdateLoading }] = useUpdatePublicDashboardMutation();
 
   const selectors = e2eSelectors.pages.PublicDashboards;
-  const hasWritePermissions = contextSrv.hasAccess(AccessControlAction.DashboardsPublicWrite, isOrgAdmin());
+  const hasWritePermissions = contextSrv.hasPermission(AccessControlAction.DashboardsPublicWrite);
   const isOrphaned = !pd.dashboardUid;
 
-  const onTogglePause = (pd: ListPublicDashboardResponse, isPaused: boolean) => {
+  const onTogglePause = (pd: PublicDashboardListResponse, isPaused: boolean) => {
     const req = {
       dashboard: { uid: pd.dashboardUid },
       payload: {
@@ -118,20 +128,33 @@ const PublicDashboardCard = ({ pd }: { pd: ListPublicDashboardResponse }) => {
 };
 
 export const PublicDashboardListTable = () => {
-  const styles = useStyles2(getStyles);
+  const [page, setPage] = useState(1);
 
-  const { data: publicDashboards, isLoading, isFetching } = useListPublicDashboardsQuery();
+  const styles = useStyles2(getStyles);
+  const { data: paginatedPublicDashboards, isLoading, isFetching, isError } = useListPublicDashboardsQuery(page);
 
   return (
     <Page navId="dashboards/public" actions={isFetching && <Spinner />}>
       <Page.Contents isLoading={isLoading}>
-        <ul className={styles.list}>
-          {publicDashboards?.map((pd: ListPublicDashboardResponse) => (
-            <li key={pd.uid}>
-              <PublicDashboardCard pd={pd} />
-            </li>
-          ))}
-        </ul>
+        {!isLoading && !isError && !!paginatedPublicDashboards && (
+          <div>
+            <ul className={styles.list}>
+              {paginatedPublicDashboards.publicDashboards.map((pd: PublicDashboardListResponse) => (
+                <li key={pd.uid}>
+                  <PublicDashboardCard pd={pd} />
+                </li>
+              ))}
+            </ul>
+            <HorizontalGroup justify="flex-end">
+              <Pagination
+                onNavigate={setPage}
+                currentPage={paginatedPublicDashboards.page}
+                numberOfPages={paginatedPublicDashboards.totalPages}
+                hideWhenSinglePage
+              />
+            </HorizontalGroup>
+          </div>
+        )}
       </Page.Contents>
     </Page>
   );
@@ -140,6 +163,7 @@ export const PublicDashboardListTable = () => {
 const getStyles = (theme: GrafanaTheme2) => ({
   list: css`
     list-style-type: none;
+    margin-bottom: ${theme.spacing(2)};
   `,
   card: css`
     ${theme.breakpoints.up('sm')} {

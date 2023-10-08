@@ -1,20 +1,18 @@
 import { createAction } from '@reduxjs/toolkit';
 import { AnyAction } from 'redux';
 
-import { SplitOpenOptions } from '@grafana/data';
-import { DataSourceSrv, locationService } from '@grafana/runtime';
-import { GetExploreUrlArguments } from 'app/core/utils/explore';
+import { SplitOpenOptions, TimeRange } from '@grafana/data';
+import { locationService } from '@grafana/runtime';
+import { generateExploreId, GetExploreUrlArguments } from 'app/core/utils/explore';
 import { PanelModel } from 'app/features/dashboard/state';
-import { ExploreId, ExploreItemState, ExploreState } from 'app/types/explore';
+import { CorrelationEditorDetailsUpdate, ExploreItemState, ExploreState } from 'app/types/explore';
 
 import { RichHistoryResults } from '../../../core/history/RichHistoryStorage';
 import { RichHistorySearchFilters, RichHistorySettings } from '../../../core/utils/richHistoryTypes';
 import { createAsyncThunk, ThunkResult } from '../../../types';
-import { CorrelationData } from '../../correlations/useCorrelations';
-import { TimeSrv } from '../../dashboard/services/TimeSrv';
 import { withUniqueRefIds } from '../utils/queries';
 
-import { initializeExplore, paneReducer } from './explorePane';
+import { initializeExplore, InitializeExploreOptions, paneReducer } from './explorePane';
 import { DEFAULT_RANGE, makeExplorePaneState } from './utils';
 
 //
@@ -26,7 +24,7 @@ export interface SyncTimesPayload {
 }
 export const syncTimesAction = createAction<SyncTimesPayload>('explore/syncTimes');
 
-export const richHistoryUpdatedAction = createAction<{ richHistoryResults: RichHistoryResults; exploreId: ExploreId }>(
+export const richHistoryUpdatedAction = createAction<{ richHistoryResults: RichHistoryResults; exploreId: string }>(
   'explore/richHistoryUpdated'
 );
 export const richHistoryStorageFullAction = createAction('explore/richHistoryStorageFullAction');
@@ -34,18 +32,16 @@ export const richHistoryLimitExceededAction = createAction('explore/richHistoryL
 
 export const richHistorySettingsUpdatedAction = createAction<RichHistorySettings>('explore/richHistorySettingsUpdated');
 export const richHistorySearchFiltersUpdatedAction = createAction<{
-  exploreId: ExploreId;
+  exploreId: string;
   filters?: RichHistorySearchFilters;
 }>('explore/richHistorySearchFiltersUpdatedAction');
 
-export const saveCorrelationsAction = createAction<CorrelationData[]>('explore/saveCorrelationsAction');
-
 export const splitSizeUpdateAction = createAction<{
-  largerExploreId?: ExploreId;
+  largerExploreId?: string;
 }>('explore/splitSizeUpdateAction');
 
 export const maximizePaneAction = createAction<{
-  exploreId?: ExploreId;
+  exploreId?: string;
 }>('explore/maximizePaneAction');
 
 export const evenPaneResizeAction = createAction('explore/evenPaneResizeAction');
@@ -53,8 +49,7 @@ export const evenPaneResizeAction = createAction('explore/evenPaneResizeAction')
 /**
  * Close the pane with the given id.
  */
-type SplitCloseActionPayload = ExploreId;
-export const splitClose = createAction<SplitCloseActionPayload>('explore/splitClose');
+export const splitClose = createAction<string>('explore/splitClose');
 
 export interface SetPaneStateActionPayload {
   [itemId: string]: Partial<ExploreItemState>;
@@ -64,33 +59,61 @@ export const setPaneState = createAction<SetPaneStateActionPayload>('explore/set
 export const clearPanes = createAction('explore/clearPanes');
 
 /**
- * Opens a new split pane. It either copies existing state of the left pane
+ * Ensure Explore doesn't exceed supported number of panes and initializes the new pane.
+ */
+export const splitOpen = createAsyncThunk(
+  'explore/splitOpen',
+  async (options: SplitOpenOptions | undefined, { getState, dispatch, requestId }) => {
+    // we currently support showing only 2 panes in explore, so if this action is dispatched we know it has been dispatched from the "first" pane.
+    const originState = Object.values(getState().explore.panes)[0];
+
+    const queries = options?.queries ?? (options?.query ? [options?.query] : originState?.queries || []);
+
+    Object.keys(getState().explore.panes).forEach((paneId, index) => {
+      // Only 2 panes are supported. Remove panes before create a new one.
+      if (index >= 1) {
+        dispatch(splitClose(paneId));
+      }
+    });
+
+    await dispatch(
+      createNewSplitOpenPane({
+        exploreId: requestId,
+        datasource: options?.datasourceUid || originState?.datasourceInstance?.getRef(),
+        queries: withUniqueRefIds(queries),
+        range: options?.range || originState?.range.raw || DEFAULT_RANGE,
+        panelsState: options?.panelsState || originState?.panelsState,
+        correlationHelperData: options?.correlationHelperData,
+      })
+    );
+  },
+  {
+    idGenerator: generateExploreId,
+  }
+);
+
+/**
+ * Opens a new split pane. It either copies existing state of an already present pane
  * or uses values from options arg.
  *
  * TODO: this can be improved by better inferring fallback values.
  */
-export const splitOpen = createAsyncThunk(
-  'explore/splitOpen',
-  async (options: SplitOpenOptions | undefined, { getState, dispatch }) => {
-    const leftState = getState().explore.panes.left;
-
-    const queries = options?.queries ?? (options?.query ? [options?.query] : leftState?.queries || []);
-
-    await dispatch(
-      initializeExplore({
-        exploreId: ExploreId.right,
-        datasource: options?.datasourceUid || leftState?.datasourceInstance?.getRef(),
-        queries: withUniqueRefIds(queries),
-        range: options?.range || leftState?.range.raw || DEFAULT_RANGE,
-        panelsState: options?.panelsState || leftState?.panelsState,
-      })
-    );
+const createNewSplitOpenPane = createAsyncThunk(
+  'explore/createNewSplitOpen',
+  async (options: InitializeExploreOptions, { dispatch }) => {
+    await dispatch(initializeExplore(options));
   }
 );
 
+/**
+ * Moves explore into and out of correlations editor mode
+ */
+export const changeCorrelationEditorDetails = createAction<CorrelationEditorDetailsUpdate>(
+  'explore/changeCorrelationEditorDetails'
+);
+
 export interface NavigateToExploreDependencies {
-  getDataSourceSrv: () => DataSourceSrv;
-  getTimeSrv: () => TimeSrv;
+  timeRange: TimeRange;
   getExploreUrl: (args: GetExploreUrlArguments) => Promise<string | undefined>;
   openInNewWindow?: (url: string) => void;
 }
@@ -100,12 +123,13 @@ export const navigateToExplore = (
   dependencies: NavigateToExploreDependencies
 ): ThunkResult<void> => {
   return async (dispatch) => {
-    const { getDataSourceSrv, getTimeSrv, getExploreUrl, openInNewWindow } = dependencies;
-    const datasourceSrv = getDataSourceSrv();
+    const { timeRange, getExploreUrl, openInNewWindow } = dependencies;
+
     const path = await getExploreUrl({
-      panel,
-      datasourceSrv,
-      timeSrv: getTimeSrv(),
+      queries: panel.targets,
+      dsRef: panel.datasource,
+      scopedVars: panel.scopedVars,
+      timeRange,
     });
 
     if (openInNewWindow && path) {
@@ -124,7 +148,7 @@ const initialExploreItemState = makeExplorePaneState();
 export const initialExploreState: ExploreState = {
   syncedTimes: false,
   panes: {},
-  correlations: undefined,
+  correlationEditorDetails: { editorMode: false, dirty: false, isExiting: false },
   richHistoryStorageFull: false,
   richHistoryLimitExceededWarningShown: false,
   largerExploreId: undefined,
@@ -138,9 +162,8 @@ export const initialExploreState: ExploreState = {
  */
 export const exploreReducer = (state = initialExploreState, action: AnyAction): ExploreState => {
   if (splitClose.match(action)) {
-    const panes = {
-      left: action.payload === ExploreId.left ? state.panes.right : state.panes.left,
-    };
+    const { [action.payload]: _, ...panes } = { ...state.panes };
+
     return {
       ...state,
       panes,
@@ -180,13 +203,6 @@ export const exploreReducer = (state = initialExploreState, action: AnyAction): 
     };
   }
 
-  if (saveCorrelationsAction.match(action)) {
-    return {
-      ...state,
-      correlations: action.payload,
-    };
-  }
-
   if (syncTimesAction.match(action)) {
     return { ...state, syncedTimes: action.payload.syncedTimes };
   }
@@ -213,23 +229,28 @@ export const exploreReducer = (state = initialExploreState, action: AnyAction): 
     };
   }
 
-  if (splitOpen.pending.match(action)) {
-    return {
-      ...state,
-      panes: {
-        ...state.panes,
-        right: initialExploreItemState,
-      },
-    };
-  }
-
-  if (initializeExplore.pending.match(action)) {
+  if (createNewSplitOpenPane.pending.match(action)) {
     return {
       ...state,
       panes: {
         ...state.panes,
         [action.meta.arg.exploreId]: initialExploreItemState,
       },
+    };
+  }
+
+  if (initializeExplore.pending.match(action)) {
+    const initialPanes = Object.entries(state.panes);
+    const before = initialPanes.slice(0, action.meta.arg.position);
+    const after = initialPanes.slice(before.length);
+    const panes = [...before, [action.meta.arg.exploreId, initialExploreItemState] as const, ...after].reduce(
+      (acc, [id, pane]) => ({ ...acc, [id]: pane }),
+      {}
+    );
+
+    return {
+      ...state,
+      panes,
     };
   }
 
@@ -240,17 +261,31 @@ export const exploreReducer = (state = initialExploreState, action: AnyAction): 
     };
   }
 
-  const exploreId: ExploreId | undefined = action.payload?.exploreId;
+  if (changeCorrelationEditorDetails.match(action)) {
+    const { editorMode, label, description, canSave, dirty, isExiting, postConfirmAction } = action.payload;
+    return {
+      ...state,
+      correlationEditorDetails: {
+        editorMode: Boolean(editorMode ?? state.correlationEditorDetails?.editorMode),
+        canSave: Boolean(canSave ?? state.correlationEditorDetails?.canSave),
+        label: label ?? state.correlationEditorDetails?.label,
+        description: description ?? state.correlationEditorDetails?.description,
+        dirty: Boolean(dirty ?? state.correlationEditorDetails?.dirty),
+        isExiting: Boolean(isExiting ?? state.correlationEditorDetails?.isExiting),
+        postConfirmAction,
+      },
+    };
+  }
+
+  const exploreId: string | undefined = action.payload?.exploreId;
   if (typeof exploreId === 'string') {
     return {
       ...state,
-      panes: Object.entries(state.panes).reduce<ExploreState['panes']>((acc, [id, pane]) => {
-        if (id === exploreId) {
-          acc[id] = paneReducer(pane, action);
-        } else {
-          acc[id as ExploreId] = pane;
-        }
-        return acc;
+      panes: Object.entries(state.panes).reduce((acc, [id, pane]) => {
+        return {
+          ...acc,
+          [id]: id === exploreId ? paneReducer(pane, action) : pane,
+        };
       }, {}),
     };
   }

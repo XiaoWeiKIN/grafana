@@ -4,15 +4,18 @@ import React from 'react';
 
 import { DataSourceApi, DataSourceInstanceSettings, DataSourcePluginMeta } from '@grafana/data';
 import { DataQuery, DataSourceRef } from '@grafana/schema';
-import appEvents from 'app/core/app_events';
 import { MixedDatasource } from 'app/plugins/datasource/mixed/MixedDataSource';
-import { ExploreId, RichHistoryQuery } from 'app/types';
+import { RichHistoryQuery } from 'app/types';
 import { ShowConfirmModalEvent } from 'app/types/events';
 
 import { RichHistoryCard, Props } from './RichHistoryCard';
 
 const starRichHistoryMock = jest.fn();
 const deleteRichHistoryMock = jest.fn();
+
+const mockEventBus = {
+  publish: jest.fn(),
+};
 
 class MockDatasourceApi<T extends DataQuery> implements DataSourceApi<T> {
   name: string;
@@ -66,6 +69,7 @@ const dsStore: Record<string, DataSourceApi> = {
 jest.mock('@grafana/runtime', () => ({
   ...jest.requireActual('@grafana/runtime'),
   reportInteraction: jest.fn(),
+  getAppEvents: () => mockEventBus,
 }));
 
 jest.mock('@grafana/runtime/src/services/dataSourceSrv', () => {
@@ -120,7 +124,7 @@ const setup = (propOverrides?: Partial<Props<MockQuery>>) => {
     deleteHistoryItem: deleteRichHistoryMock,
     commentHistoryItem: jest.fn(),
     setQueries: jest.fn(),
-    exploreId: ExploreId.left,
+    exploreId: 'left',
     datasourceInstance: dsStore.loki,
   };
 
@@ -486,7 +490,7 @@ describe('RichHistoryCard', () => {
       const deleteButton = await screen.findByLabelText('Delete query');
       await userEvent.click(deleteButton);
       expect(deleteRichHistoryMock).not.toBeCalled();
-      expect(appEvents.publish).toHaveBeenCalledWith(new ShowConfirmModalEvent(expect.anything()));
+      expect(mockEventBus.publish).toHaveBeenCalledWith(new ShowConfirmModalEvent(expect.anything()));
     });
   });
 });

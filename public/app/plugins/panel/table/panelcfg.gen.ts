@@ -10,8 +10,6 @@
 
 import * as ui from '@grafana/schema';
 
-export const PanelCfgModelVersion = Object.freeze([0, 0]);
-
 export interface Options {
   /**
    * Controls the height of the rows
@@ -60,3 +58,5 @@ export const defaultOptions: Partial<Options> = {
   showTypeIcons: false,
   sortBy: [],
 };
+
+export interface FieldConfig extends ui.TableFieldOptions {}

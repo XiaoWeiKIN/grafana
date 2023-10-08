@@ -8,6 +8,7 @@ import (
 
 	"github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
 	"github.com/grafana/grafana/pkg/services/ngalert/models"
+	"github.com/grafana/grafana/pkg/util"
 )
 
 // AlertRuleFromProvisionedAlertRule converts definitions.ProvisionedAlertRule to models.AlertRule
@@ -151,11 +152,13 @@ func AlertRuleGroupExportFromAlertRuleGroupWithFolderTitle(d models.AlertRuleGro
 		rules = append(rules, alert)
 	}
 	return definitions.AlertRuleGroupExport{
-		OrgID:    d.OrgID,
-		Name:     d.Title,
-		Folder:   d.FolderTitle,
-		Interval: model.Duration(time.Duration(d.Interval) * time.Second),
-		Rules:    rules,
+		OrgID:           d.OrgID,
+		Name:            d.Title,
+		Folder:          d.FolderTitle,
+		FolderUID:       d.FolderUID,
+		Interval:        model.Duration(time.Duration(d.Interval) * time.Second),
+		IntervalSeconds: d.Interval,
+		Rules:           rules,
 	}, nil
 }
 
@@ -170,48 +173,134 @@ func AlertRuleExportFromAlertRule(rule models.AlertRule) (definitions.AlertRuleE
 		data = append(data, query)
 	}
 
-	var dashboardUID string
-	if rule.DashboardUID != nil {
-		dashboardUID = *rule.DashboardUID
-	}
-
-	var panelID int64
-	if rule.PanelID != nil {
-		panelID = *rule.PanelID
-	}
-
-	return definitions.AlertRuleExport{
+	result := definitions.AlertRuleExport{
 		UID:          rule.UID,
 		Title:        rule.Title,
 		For:          model.Duration(rule.For),
 		Condition:    rule.Condition,
 		Data:         data,
-		DashboardUID: dashboardUID,
-		PanelID:      panelID,
+		DashboardUID: rule.DashboardUID,
+		PanelID:      rule.PanelID,
 		NoDataState:  definitions.NoDataState(rule.NoDataState),
 		ExecErrState: definitions.ExecutionErrorState(rule.ExecErrState),
-		Annotations:  rule.Annotations,
-		Labels:       rule.Labels,
 		IsPaused:     rule.IsPaused,
-	}, nil
+	}
+	if rule.For.Seconds() > 0 {
+		result.ForSeconds = util.Pointer(int64(rule.For.Seconds()))
+	}
+	if rule.Annotations != nil {
+		result.Annotations = &rule.Annotations
+	}
+	if rule.Labels != nil {
+		result.Labels = &rule.Labels
+	}
+	return result, nil
 }
 
 // AlertQueryExportFromAlertQuery creates a definitions.AlertQueryExport DTO from models.AlertQuery.
 func AlertQueryExportFromAlertQuery(query models.AlertQuery) (definitions.AlertQueryExport, error) {
 	// We unmarshal the json.RawMessage model into a map in order to facilitate yaml marshalling.
-	var mdl map[string]interface{}
+	var mdl map[string]any
 	err := json.Unmarshal(query.Model, &mdl)
 	if err != nil {
 		return definitions.AlertQueryExport{}, err
 	}
+	var queryType *string
+	if query.QueryType != "" {
+		queryType = &query.QueryType
+	}
 	return definitions.AlertQueryExport{
 		RefID:     query.RefID,
-		QueryType: query.QueryType,
-		RelativeTimeRange: definitions.RelativeTimeRange{
-			From: definitions.Duration(query.RelativeTimeRange.From),
-			To:   definitions.Duration(query.RelativeTimeRange.To),
+		QueryType: queryType,
+		RelativeTimeRange: definitions.RelativeTimeRangeExport{
+			FromSeconds: int64(time.Duration(query.RelativeTimeRange.From).Seconds()),
+			ToSeconds:   int64(time.Duration(query.RelativeTimeRange.To).Seconds()),
 		},
 		DatasourceUID: query.DatasourceUID,
 		Model:         mdl,
+		ModelString:   string(query.Model),
 	}, nil
+}
+
+// AlertingFileExportFromEmbeddedContactPoints creates a definitions.AlertingFileExport DTO from []definitions.EmbeddedContactPoint.
+func AlertingFileExportFromEmbeddedContactPoints(orgID int64, ecps []definitions.EmbeddedContactPoint) (definitions.AlertingFileExport, error) {
+	f := definitions.AlertingFileExport{APIVersion: 1}
+
+	cache := make(map[string]*definitions.ContactPointExport)
+	contactPoints := make([]*definitions.ContactPointExport, 0)
+	for _, ecp := range ecps {
+		c, ok := cache[ecp.Name]
+		if !ok {
+			c = &definitions.ContactPointExport{
+				OrgID:     orgID,
+				Name:      ecp.Name,
+				Receivers: make([]definitions.ReceiverExport, 0),
+			}
+			cache[ecp.Name] = c
+			contactPoints = append(contactPoints, c)
+		}
+
+		recv, err := ReceiverExportFromEmbeddedContactPoint(ecp)
+		if err != nil {
+			return definitions.AlertingFileExport{}, err
+		}
+		c.Receivers = append(c.Receivers, recv)
+	}
+
+	for _, c := range contactPoints {
+		f.ContactPoints = append(f.ContactPoints, *c)
+	}
+	return f, nil
+}
+
+// ReceiverExportFromEmbeddedContactPoint creates a definitions.ReceiverExport DTO from definitions.EmbeddedContactPoint.
+func ReceiverExportFromEmbeddedContactPoint(contact definitions.EmbeddedContactPoint) (definitions.ReceiverExport, error) {
+	raw, err := contact.Settings.MarshalJSON()
+	if err != nil {
+		return definitions.ReceiverExport{}, err
+	}
+	return definitions.ReceiverExport{
+		UID:                   contact.UID,
+		Type:                  contact.Type,
+		Settings:              raw,
+		DisableResolveMessage: contact.DisableResolveMessage,
+	}, nil
+}
+
+// AlertingFileExportFromRoute creates a definitions.AlertingFileExport DTO from definitions.Route.
+func AlertingFileExportFromRoute(orgID int64, route definitions.Route) (definitions.AlertingFileExport, error) {
+	f := definitions.AlertingFileExport{
+		APIVersion: 1,
+		Policies: []definitions.NotificationPolicyExport{{
+			OrgID:  orgID,
+			Policy: RouteExportFromRoute(&route),
+		}},
+	}
+	return f, nil
+}
+
+// RouteExportFromRoute creates a definitions.RouteExport DTO from definitions.Route.
+func RouteExportFromRoute(route *definitions.Route) *definitions.RouteExport {
+	export := definitions.RouteExport{
+		Receiver:          route.Receiver,
+		GroupByStr:        route.GroupByStr,
+		Match:             route.Match,
+		MatchRE:           route.MatchRE,
+		Matchers:          route.Matchers,
+		ObjectMatchers:    route.ObjectMatchers,
+		MuteTimeIntervals: route.MuteTimeIntervals,
+		Continue:          route.Continue,
+		GroupWait:         route.GroupWait,
+		GroupInterval:     route.GroupInterval,
+		RepeatInterval:    route.RepeatInterval,
+	}
+
+	if len(route.Routes) > 0 {
+		export.Routes = make([]*definitions.RouteExport, 0, len(route.Routes))
+		for _, r := range route.Routes {
+			export.Routes = append(export.Routes, RouteExportFromRoute(r))
+		}
+	}
+
+	return &export
 }

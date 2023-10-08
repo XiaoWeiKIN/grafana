@@ -3,14 +3,26 @@ import { of } from 'rxjs';
 import { DataQueryResponse, FieldType, LogRowContextQueryDirection, LogRowModel, createDataFrame } from '@grafana/data';
 
 import LokiLanguageProvider from './LanguageProvider';
-import { LogContextProvider, LOKI_LOG_CONTEXT_PRESERVED_LABELS } from './LogContextProvider';
+import {
+  LogContextProvider,
+  LOKI_LOG_CONTEXT_PRESERVED_LABELS,
+  SHOULD_INCLUDE_PIPELINE_OPERATIONS,
+} from './LogContextProvider';
 import { createLokiDatasource } from './mocks';
 import { LokiQuery } from './types';
 
 jest.mock('app/core/store', () => {
   return {
-    get() {
-      return window.localStorage.getItem(LOKI_LOG_CONTEXT_PRESERVED_LABELS);
+    get(item: string) {
+      return window.localStorage.getItem(item);
+    },
+    getBool(key: string, defaultValue?: boolean) {
+      const item = window.localStorage.getItem(key);
+      if (item === null) {
+        return defaultValue;
+      } else {
+        return item === 'true';
+      }
     },
   };
 });
@@ -65,12 +77,13 @@ describe('LogContextProvider', () => {
         },
         {
           expr: '{bar="baz"}',
-        } as LokiQuery
+          refId: 'A',
+        }
       );
       expect(logContextProvider.getInitContextFilters).toBeCalled();
       expect(logContextProvider.getInitContextFilters).toHaveBeenCalledWith(
         { bar: 'baz', foo: 'uniqueParsedLabel', xyz: 'abc' },
-        { expr: '{bar="baz"}' }
+        { expr: '{bar="baz"}', refId: 'A' }
       );
       expect(logContextProvider.appliedContextFilters).toHaveLength(1);
     });
@@ -123,7 +136,8 @@ describe('LogContextProvider', () => {
     describe('query with no parser', () => {
       const query = {
         expr: '{bar="baz"}',
-      } as LokiQuery;
+        refId: 'A',
+      };
       it('returns empty expression if no appliedContextFilters', async () => {
         logContextProvider.appliedContextFilters = [];
         const result = await logContextProvider.prepareLogRowContextQueryTarget(
@@ -164,7 +178,8 @@ describe('LogContextProvider', () => {
           LogRowContextQueryDirection.Backward,
           {
             expr: '{bar="baz"} | logfmt',
-          } as LokiQuery
+            refId: 'A',
+          }
         );
 
         expect(contextQuery.query.expr).toEqual('{bar="baz",xyz="abc"} | logfmt');
@@ -182,7 +197,8 @@ describe('LogContextProvider', () => {
           LogRowContextQueryDirection.Backward,
           {
             expr: '{bar="baz"} | logfmt',
-          } as LokiQuery
+            refId: 'A',
+          }
         );
 
         expect(contextQuery.query.expr).toEqual('{bar="baz",xyz="abc"} | logfmt | foo=`uniqueParsedLabel`');
@@ -200,7 +216,155 @@ describe('LogContextProvider', () => {
         LogRowContextQueryDirection.Backward,
         {
           expr: '{bar="baz"} | logfmt | json',
-        } as unknown as LokiQuery
+          refId: 'A',
+        }
+      );
+
+      expect(contextQuery.query.expr).toEqual(`{bar="baz"}`);
+    });
+
+    it('should not apply line_format if flag is not set by default', async () => {
+      logContextProvider.appliedContextFilters = [{ value: 'baz', enabled: true, fromParser: false, label: 'bar' }];
+      const contextQuery = await logContextProvider.prepareLogRowContextQueryTarget(
+        defaultLogRow,
+        10,
+        LogRowContextQueryDirection.Backward,
+        {
+          expr: '{bar="baz"} | logfmt | line_format "foo"',
+          refId: 'A',
+        }
+      );
+
+      expect(contextQuery.query.expr).toEqual(`{bar="baz"} | logfmt`);
+    });
+
+    it('should not apply line_format if flag is not set', async () => {
+      window.localStorage.setItem(SHOULD_INCLUDE_PIPELINE_OPERATIONS, 'false');
+      logContextProvider.appliedContextFilters = [{ value: 'baz', enabled: true, fromParser: false, label: 'bar' }];
+      const contextQuery = await logContextProvider.prepareLogRowContextQueryTarget(
+        defaultLogRow,
+        10,
+        LogRowContextQueryDirection.Backward,
+        {
+          expr: '{bar="baz"} | logfmt  | line_format "foo"',
+          refId: 'A',
+        }
+      );
+
+      expect(contextQuery.query.expr).toEqual(`{bar="baz"} | logfmt`);
+    });
+
+    it('should apply line_format if flag is set', async () => {
+      window.localStorage.setItem(SHOULD_INCLUDE_PIPELINE_OPERATIONS, 'true');
+      logContextProvider.appliedContextFilters = [{ value: 'baz', enabled: true, fromParser: false, label: 'bar' }];
+      const contextQuery = await logContextProvider.prepareLogRowContextQueryTarget(
+        defaultLogRow,
+        10,
+        LogRowContextQueryDirection.Backward,
+        {
+          expr: '{bar="baz"} | logfmt | line_format "foo"',
+          refId: 'A',
+        }
+      );
+
+      expect(contextQuery.query.expr).toEqual(`{bar="baz"} | logfmt | line_format "foo"`);
+    });
+
+    it('should not apply line filters if flag is set', async () => {
+      window.localStorage.setItem(SHOULD_INCLUDE_PIPELINE_OPERATIONS, 'true');
+      logContextProvider.appliedContextFilters = [{ value: 'baz', enabled: true, fromParser: false, label: 'bar' }];
+      let contextQuery = await logContextProvider.prepareLogRowContextQueryTarget(
+        defaultLogRow,
+        10,
+        LogRowContextQueryDirection.Backward,
+        {
+          expr: '{bar="baz"} | logfmt | line_format "foo" |= "bar"',
+          refId: 'A',
+        }
+      );
+
+      expect(contextQuery.query.expr).toEqual(`{bar="baz"} | logfmt | line_format "foo"`);
+
+      contextQuery = await logContextProvider.prepareLogRowContextQueryTarget(
+        defaultLogRow,
+        10,
+        LogRowContextQueryDirection.Backward,
+        {
+          expr: '{bar="baz"} | logfmt | line_format "foo" |~ "bar"',
+          refId: 'A',
+        }
+      );
+
+      expect(contextQuery.query.expr).toEqual(`{bar="baz"} | logfmt | line_format "foo"`);
+
+      contextQuery = await logContextProvider.prepareLogRowContextQueryTarget(
+        defaultLogRow,
+        10,
+        LogRowContextQueryDirection.Backward,
+        {
+          expr: '{bar="baz"} | logfmt | line_format "foo" !~ "bar"',
+          refId: 'A',
+        }
+      );
+
+      expect(contextQuery.query.expr).toEqual(`{bar="baz"} | logfmt | line_format "foo"`);
+
+      contextQuery = await logContextProvider.prepareLogRowContextQueryTarget(
+        defaultLogRow,
+        10,
+        LogRowContextQueryDirection.Backward,
+        {
+          expr: '{bar="baz"} | logfmt | line_format "foo" != "bar"',
+          refId: 'A',
+        }
+      );
+
+      expect(contextQuery.query.expr).toEqual(`{bar="baz"} | logfmt | line_format "foo"`);
+    });
+
+    it('should not apply line filters if nested between two operations', async () => {
+      window.localStorage.setItem(SHOULD_INCLUDE_PIPELINE_OPERATIONS, 'true');
+      logContextProvider.appliedContextFilters = [{ value: 'baz', enabled: true, fromParser: false, label: 'bar' }];
+      const contextQuery = await logContextProvider.prepareLogRowContextQueryTarget(
+        defaultLogRow,
+        10,
+        LogRowContextQueryDirection.Backward,
+        {
+          expr: '{bar="baz"} | logfmt | line_format "foo" |= "bar" | label_format a="baz"',
+          refId: 'A',
+        }
+      );
+
+      expect(contextQuery.query.expr).toEqual(`{bar="baz"} | logfmt | line_format "foo" | label_format a="baz"`);
+    });
+
+    it('should not apply label filters', async () => {
+      window.localStorage.setItem(SHOULD_INCLUDE_PIPELINE_OPERATIONS, 'true');
+      logContextProvider.appliedContextFilters = [{ value: 'baz', enabled: true, fromParser: false, label: 'bar' }];
+      const contextQuery = await logContextProvider.prepareLogRowContextQueryTarget(
+        defaultLogRow,
+        10,
+        LogRowContextQueryDirection.Backward,
+        {
+          expr: '{bar="baz"} | logfmt | line_format "foo" | bar > 1 | label_format a="baz"',
+          refId: 'A',
+        }
+      );
+
+      expect(contextQuery.query.expr).toEqual(`{bar="baz"} | logfmt | line_format "foo" | label_format a="baz"`);
+    });
+
+    it('should not apply additional parsers', async () => {
+      window.localStorage.setItem(SHOULD_INCLUDE_PIPELINE_OPERATIONS, 'true');
+      logContextProvider.appliedContextFilters = [{ value: 'baz', enabled: true, fromParser: false, label: 'bar' }];
+      const contextQuery = await logContextProvider.prepareLogRowContextQueryTarget(
+        defaultLogRow,
+        10,
+        LogRowContextQueryDirection.Backward,
+        {
+          expr: '{bar="baz"} | logfmt | line_format "foo" | json | label_format a="baz"',
+          refId: 'A',
+        }
       );
 
       expect(contextQuery.query.expr).toEqual(`{bar="baz"}`);
@@ -209,9 +373,10 @@ describe('LogContextProvider', () => {
 
   describe('getInitContextFiltersFromLabels', () => {
     describe('query with no parser', () => {
-      const queryWithoutParser = {
+      const queryWithoutParser: LokiQuery = {
         expr: '{bar="baz"}',
-      } as LokiQuery;
+        refId: 'A',
+      };
 
       it('should correctly create contextFilters', async () => {
         const filters = await logContextProvider.getInitContextFilters(defaultLogRow.labels, queryWithoutParser);
@@ -234,9 +399,10 @@ describe('LogContextProvider', () => {
     });
 
     describe('query with parser', () => {
-      const queryWithParser = {
+      const queryWithParser: LokiQuery = {
         expr: '{bar="baz"} | logfmt',
-      } as LokiQuery;
+        refId: 'A',
+      };
 
       it('should correctly create contextFilters', async () => {
         const filters = await logContextProvider.getInitContextFilters(defaultLogRow.labels, queryWithParser);
@@ -259,9 +425,10 @@ describe('LogContextProvider', () => {
     });
 
     describe('with preserved labels', () => {
-      const queryWithParser = {
+      const queryWithParser: LokiQuery = {
         expr: '{bar="baz"} | logfmt',
-      } as LokiQuery;
+        refId: 'A',
+      };
 
       it('should correctly apply preserved labels', async () => {
         window.localStorage.setItem(
@@ -310,6 +477,41 @@ describe('LogContextProvider', () => {
           { enabled: true, fromParser: false, label: 'xyz', value: 'abc' },
         ]);
       });
+    });
+  });
+
+  describe('queryContainsValidPipelineStages', () => {
+    it('should return true if query contains a line_format stage', () => {
+      expect(
+        logContextProvider.queryContainsValidPipelineStages({ expr: '{foo="bar"} | line_format "foo"', refId: 'A' })
+      ).toBe(true);
+    });
+
+    it('should return true if query contains a label_format stage', () => {
+      expect(
+        logContextProvider.queryContainsValidPipelineStages({ expr: '{foo="bar"} | label_format a="foo"', refId: 'A' })
+      ).toBe(true);
+    });
+
+    it('should return false if query contains a parser', () => {
+      expect(logContextProvider.queryContainsValidPipelineStages({ expr: '{foo="bar"} | json', refId: 'A' })).toBe(
+        false
+      );
+    });
+
+    it('should return false if query contains a line filter', () => {
+      expect(logContextProvider.queryContainsValidPipelineStages({ expr: '{foo="bar"} |= "test"', refId: 'A' })).toBe(
+        false
+      );
+    });
+
+    it('should return true if query contains a line filter and a label_format', () => {
+      expect(
+        logContextProvider.queryContainsValidPipelineStages({
+          expr: '{foo="bar"} |= "test" | label_format a="foo"',
+          refId: 'A',
+        })
+      ).toBe(true);
     });
   });
 });

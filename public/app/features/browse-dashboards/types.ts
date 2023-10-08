@@ -33,15 +33,14 @@ export interface UIDashboardViewItem {
   uid: string;
 }
 
-type DashboardViewItemWithUIItems = DashboardViewItem | UIDashboardViewItem;
+export type DashboardViewItemWithUIItems = DashboardViewItem | UIDashboardViewItem;
 
 export interface DashboardsTreeItem<T extends DashboardViewItemWithUIItems = DashboardViewItemWithUIItems> {
   item: T;
   level: number;
   isOpen: boolean;
+  parentUID?: string;
 }
-
-export const INDENT_AMOUNT_CSS_VAR = '--dashboards-tree-indentation';
 
 interface RendererUserProps {
   // Note: userProps for cell renderers (e.g. second argument in `cell.render('Cell', foo)` )
@@ -49,6 +48,7 @@ interface RendererUserProps {
   isSelected?: (kind: DashboardViewItem | '$all') => SelectionState;
   onAllSelectionChange?: (newState: boolean) => void;
   onItemSelectionChange?: (item: DashboardViewItem, newState: boolean) => void;
+  treeID?: string;
 }
 
 export type DashboardsTreeColumn = Column<DashboardsTreeItem>;

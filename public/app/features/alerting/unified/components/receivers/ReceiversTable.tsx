@@ -1,41 +1,42 @@
 import pluralize from 'pluralize';
 import React, { useMemo, useState } from 'react';
+import { useToggle } from 'react-use';
 
 import { dateTime, dateTimeFormat } from '@grafana/data';
 import { Stack } from '@grafana/experimental';
 import { Badge, Button, ConfirmModal, Icon, Modal, useStyles2 } from '@grafana/ui';
-import { contextSrv } from 'app/core/services/context_srv';
 import { AlertManagerCortexConfig } from 'app/plugins/datasource/alertmanager/types';
-import { AccessControlAction, ContactPointsState, NotifiersState, ReceiversState, useDispatch } from 'app/types';
+import { ContactPointsState, NotifiersState, ReceiversState, useDispatch } from 'app/types';
 
 import { useGetContactPointsState } from '../../api/receiversApi';
 import { Authorize } from '../../components/Authorize';
+import { AlertmanagerAction, useAlertmanagerAbility } from '../../hooks/useAbilities';
 import { useUnifiedAlertingSelector } from '../../hooks/useUnifiedAlertingSelector';
 import { deleteReceiverAction } from '../../state/actions';
 import { getAlertTableStyles } from '../../styles/table';
 import { SupportedPlugin } from '../../types/pluginBridges';
-import { getNotificationsPermissions } from '../../utils/access-control';
 import { isReceiverUsed } from '../../utils/alertmanager';
-import { isVanillaPrometheusAlertManagerDataSource } from '../../utils/datasource';
+import { GRAFANA_RULES_SOURCE_NAME, isVanillaPrometheusAlertManagerDataSource } from '../../utils/datasource';
 import { makeAMLink } from '../../utils/misc';
 import { extractNotifierTypeCounts } from '../../utils/receivers';
 import { DynamicTable, DynamicTableColumnProps, DynamicTableItemProps } from '../DynamicTable';
 import { ProvisioningBadge } from '../Provisioning';
+import { GrafanaReceiverExporter } from '../export/GrafanaReceiverExporter';
 import { ActionIcon } from '../rules/ActionIcon';
 
 import { ReceiversSection } from './ReceiversSection';
-import { GrafanaAppBadge } from './grafanaAppReceivers/GrafanaAppBadge';
-import { useGetReceiversWithGrafanaAppTypes } from './grafanaAppReceivers/grafanaApp';
-import { ReceiverWithTypes } from './grafanaAppReceivers/types';
+import { ReceiverMetadataBadge } from './grafanaAppReceivers/ReceiverMetadataBadge';
+import { ReceiverMetadata, useReceiversMetadata } from './grafanaAppReceivers/useReceiversMetadata';
+import { AlertmanagerConfigHealth, useAlertmanagerConfigHealth } from './useAlertmanagerConfigHealth';
 
 interface UpdateActionProps extends ActionProps {
   onClickDeleteReceiver: (receiverName: string) => void;
 }
 
-function UpdateActions({ permissions, alertManagerName, receiverName, onClickDeleteReceiver }: UpdateActionProps) {
+function UpdateActions({ alertManagerName, receiverName, onClickDeleteReceiver }: UpdateActionProps) {
   return (
     <>
-      <Authorize actions={[permissions.update]}>
+      <Authorize actions={[AlertmanagerAction.UpdateContactPoint]}>
         <ActionIcon
           aria-label="Edit"
           data-testid="edit"
@@ -47,7 +48,7 @@ function UpdateActions({ permissions, alertManagerName, receiverName, onClickDel
           icon="pen"
         />
       </Authorize>
-      <Authorize actions={[permissions.delete]}>
+      <Authorize actions={[AlertmanagerAction.DeleteContactPoint]}>
         <ActionIcon
           onClick={() => onClickDeleteReceiver(receiverName)}
           tooltip="Delete contact point"
@@ -57,20 +58,16 @@ function UpdateActions({ permissions, alertManagerName, receiverName, onClickDel
     </>
   );
 }
+
 interface ActionProps {
-  permissions: {
-    read: AccessControlAction;
-    create: AccessControlAction;
-    update: AccessControlAction;
-    delete: AccessControlAction;
-  };
   alertManagerName: string;
   receiverName: string;
+  canReadSecrets?: boolean;
 }
 
-function ViewAction({ permissions, alertManagerName, receiverName }: ActionProps) {
+function ViewAction({ alertManagerName, receiverName }: ActionProps) {
   return (
-    <Authorize actions={[permissions.update]}>
+    <Authorize actions={[AlertmanagerAction.UpdateContactPoint]}>
       <ActionIcon
         data-testid="view"
         to={makeAMLink(`/alerting/notifications/receivers/${encodeURIComponent(receiverName)}/edit`, alertManagerName)}
@@ -80,6 +77,31 @@ function ViewAction({ permissions, alertManagerName, receiverName }: ActionProps
     </Authorize>
   );
 }
+
+function ExportAction({ receiverName, canReadSecrets = false }: ActionProps) {
+  const [showExportDrawer, toggleShowExportDrawer] = useToggle(false);
+
+  return (
+    <Authorize actions={[AlertmanagerAction.ExportContactPoint]}>
+      <ActionIcon
+        data-testid="export"
+        tooltip={
+          canReadSecrets ? 'Export contact point with decrypted secrets' : 'Export contact point with redacted secrets'
+        }
+        icon="download-alt"
+        onClick={toggleShowExportDrawer}
+      />
+      {showExportDrawer && (
+        <GrafanaReceiverExporter
+          receiverName={receiverName}
+          decrypt={canReadSecrets}
+          onClose={toggleShowExportDrawer}
+        />
+      )}
+    </Authorize>
+  );
+}
+
 interface ReceiverErrorProps {
   errorCount: number;
   errorDetail?: string;
@@ -146,11 +168,13 @@ const useContactPointsState = (alertManagerName: string) => {
   const errorStateAvailable = Object.keys(receivers).length > 0;
   return { contactPointsState, errorStateAvailable };
 };
+
 interface ReceiverItem {
   name: string;
   types: string[];
   provisioned?: boolean;
   grafanaAppReceiverType?: SupportedPlugin;
+  metadata?: ReceiverMetadata;
 }
 
 interface NotifierStatus {
@@ -170,6 +194,7 @@ type NotifierItemTableProps = DynamicTableItemProps<NotifierStatus>;
 interface NotifiersTableProps {
   notifiersState: NotifiersState;
 }
+
 const isLastNotifyNullDate = (lastNotify: string) => lastNotify === '0001-01-01T00:00:00.000Z';
 
 function LastNotify({ lastNotifyDate }: { lastNotifyDate: string }) {
@@ -234,6 +259,7 @@ function NotifiersTable({ notifiersState }: NotifiersTableProps) {
       },
     ];
   }
+
   const notifierRows: NotifierItemTableProps[] = Object.entries(notifiersState).flatMap((typeState) =>
     typeState[1].map((notifierStatus, index) => {
       return {
@@ -249,7 +275,7 @@ function NotifiersTable({ notifiersState }: NotifiersTableProps) {
     })
   );
 
-  return <DynamicTable items={notifierRows} cols={getNotifierColumns()} />;
+  return <DynamicTable items={notifierRows} cols={getNotifierColumns()} pagination={{ itemsPerPage: 25 }} />;
 }
 
 interface Props {
@@ -260,14 +286,18 @@ interface Props {
 export const ReceiversTable = ({ config, alertManagerName }: Props) => {
   const dispatch = useDispatch();
   const isVanillaAM = isVanillaPrometheusAlertManagerDataSource(alertManagerName);
-  const permissions = getNotificationsPermissions(alertManagerName);
   const grafanaNotifiers = useUnifiedAlertingSelector((state) => state.grafanaNotifiers);
 
+  const configHealth = useAlertmanagerConfigHealth(config.alertmanager_config);
   const { contactPointsState, errorStateAvailable } = useContactPointsState(alertManagerName);
+  const receiversMetadata = useReceiversMetadata(config.alertmanager_config.receivers ?? []);
 
   // receiver name slated for deletion. If this is set, a confirmation modal is shown. If user approves, this receiver is deleted
   const [receiverToDelete, setReceiverToDelete] = useState<string>();
   const [showCannotDeleteReceiverModal, setShowCannotDeleteReceiverModal] = useState(false);
+
+  const [supportsExport, allowedToExport] = useAlertmanagerAbility(AlertmanagerAction.ExportContactPoint);
+  const showExport = supportsExport && allowedToExport;
 
   const onClickDeleteReceiver = (receiverName: string): void => {
     if (isReceiverUsed(receiverName, config)) {
@@ -283,10 +313,12 @@ export const ReceiversTable = ({ config, alertManagerName }: Props) => {
     }
     setReceiverToDelete(undefined);
   };
-  const receivers = useGetReceiversWithGrafanaAppTypes(config.alertmanager_config.receivers ?? []);
+
   const rows: RowItemTableProps[] = useMemo(() => {
+    const receivers = config.alertmanager_config.receivers ?? [];
+
     return (
-      receivers?.map((receiver: ReceiverWithTypes) => ({
+      receivers.map((receiver) => ({
         id: receiver.name,
         data: {
           name: receiver.name,
@@ -298,31 +330,39 @@ export const ReceiversTable = ({ config, alertManagerName }: Props) => {
               return type;
             }
           ),
-          grafanaAppReceiverType: receiver.grafanaAppReceiverType,
           provisioned: receiver.grafana_managed_receiver_configs?.some((receiver) => receiver.provenance),
+          metadata: receiversMetadata.get(receiver),
         },
       })) ?? []
     );
-  }, [grafanaNotifiers.result, receivers]);
+  }, [grafanaNotifiers.result, config.alertmanager_config, receiversMetadata]);
+
+  const [createSupported, createAllowed] = useAlertmanagerAbility(AlertmanagerAction.CreateContactPoint);
+
+  const [_, canReadSecrets] = useAlertmanagerAbility(AlertmanagerAction.DecryptSecrets);
 
   const columns = useGetColumns(
     alertManagerName,
     errorStateAvailable,
     contactPointsState,
+    configHealth,
     onClickDeleteReceiver,
-    permissions,
-    isVanillaAM
+    isVanillaAM,
+    canReadSecrets
   );
 
   return (
     <ReceiversSection
+      canReadSecrets={canReadSecrets}
       title="Contact points"
       description="Define where notifications are sent, for example, email or Slack."
-      showButton={!isVanillaAM && contextSrv.hasPermission(permissions.create)}
+      showButton={createSupported && createAllowed}
       addButtonLabel={'Add contact point'}
       addButtonTo={makeAMLink('/alerting/notifications/receivers/new', alertManagerName)}
+      showExport={showExport}
     >
       <DynamicTable
+        pagination={{ itemsPerPage: 25 }}
         items={rows}
         cols={columns}
         isExpandable={errorStateAvailable}
@@ -369,8 +409,12 @@ const errorsByReceiver = (contactPointsState: ContactPointsState, receiverName: 
 
 const someNotifiersWithNoAttempt = (contactPointsState: ContactPointsState, receiverName: string) => {
   const notifiers = Object.values(contactPointsState?.receivers[receiverName]?.notifiers ?? {});
-  const hasSomeWitNoAttempt =
-    notifiers.length === 0 || notifiers.flat().some((status) => isLastNotifyNullDate(status.lastNotifyAttempt));
+
+  if (notifiers.length === 0) {
+    return false;
+  }
+
+  const hasSomeWitNoAttempt = notifiers.flat().some((status) => isLastNotifyNullDate(status.lastNotifyAttempt));
   return hasSomeWitNoAttempt;
 };
 
@@ -378,43 +422,51 @@ function useGetColumns(
   alertManagerName: string,
   errorStateAvailable: boolean,
   contactPointsState: ContactPointsState | undefined,
+  configHealth: AlertmanagerConfigHealth,
   onClickDeleteReceiver: (receiverName: string) => void,
-  permissions: {
-    read: AccessControlAction;
-    create: AccessControlAction;
-    update: AccessControlAction;
-    delete: AccessControlAction;
-  },
-  isVanillaAM: boolean
+  isVanillaAM: boolean,
+  canReadSecrets: boolean
 ): RowTableColumnProps[] {
   const tableStyles = useStyles2(getAlertTableStyles);
+
+  const enableHealthColumn =
+    errorStateAvailable || Object.values(configHealth.contactPoints).some((cp) => cp.matchingRoutes === 0);
+
+  const isGrafanaAlertManager = alertManagerName === GRAFANA_RULES_SOURCE_NAME;
+
   const baseColumns: RowTableColumnProps[] = [
     {
       id: 'name',
       label: 'Contact point name',
       renderCell: ({ data: { name, provisioned } }) => (
-        <Stack alignItems="center">
+        <>
           <div>{name}</div>
           {provisioned && <ProvisioningBadge />}
-        </Stack>
+        </>
       ),
-      size: 1,
+      size: 3,
+      className: tableStyles.nameCell,
     },
     {
       id: 'type',
       label: 'Type',
-      renderCell: ({ data: { types, grafanaAppReceiverType } }) => (
-        <>{grafanaAppReceiverType ? <GrafanaAppBadge grafanaAppType={grafanaAppReceiverType} /> : types.join(', ')}</>
+      renderCell: ({ data: { types, metadata } }) => (
+        <>{metadata ? <ReceiverMetadataBadge metadata={metadata} /> : types.join(', ')}</>
       ),
-      size: 1,
+      size: 2,
     },
   ];
   const healthColumn: RowTableColumnProps = {
     id: 'health',
     label: 'Health',
     renderCell: ({ data: { name } }) => {
+      if (configHealth.contactPoints[name]?.matchingRoutes === 0) {
+        return <UnusedContactPointBadge />;
+      }
+
       return (
-        contactPointsState && (
+        contactPointsState &&
+        Object.entries(contactPointsState.receivers).length > 0 && (
           <ReceiverHealth
             errorsByReceiver={errorsByReceiver(contactPointsState, name)}
             someWithNoAttempt={someNotifiersWithNoAttempt(contactPointsState, name)}
@@ -422,28 +474,34 @@ function useGetColumns(
         )
       );
     },
-    size: 1,
+    size: '160px',
   };
 
   return [
     ...baseColumns,
-    ...(errorStateAvailable ? [healthColumn] : []),
+    ...(enableHealthColumn ? [healthColumn] : []),
     {
       id: 'actions',
       label: 'Actions',
       renderCell: ({ data: { provisioned, name } }) => (
-        <Authorize actions={[permissions.update, permissions.delete]}>
+        <Authorize
+          actions={[
+            AlertmanagerAction.UpdateContactPoint,
+            AlertmanagerAction.DeleteContactPoint,
+            AlertmanagerAction.ExportContactPoint,
+          ]}
+        >
           <div className={tableStyles.actionsCell}>
             {!isVanillaAM && !provisioned && (
               <UpdateActions
-                permissions={permissions}
                 alertManagerName={alertManagerName}
                 receiverName={name}
                 onClickDeleteReceiver={onClickDeleteReceiver}
               />
             )}
-            {(isVanillaAM || provisioned) && (
-              <ViewAction permissions={permissions} alertManagerName={alertManagerName} receiverName={name} />
+            {(isVanillaAM || provisioned) && <ViewAction alertManagerName={alertManagerName} receiverName={name} />}
+            {isGrafanaAlertManager && (
+              <ExportAction alertManagerName={alertManagerName} receiverName={name} canReadSecrets={canReadSecrets} />
             )}
           </div>
         </Authorize>
@@ -451,4 +509,15 @@ function useGetColumns(
       size: '100px',
     },
   ];
+}
+
+export function UnusedContactPointBadge() {
+  return (
+    <Badge
+      text="Unused"
+      color="orange"
+      icon="exclamation-triangle"
+      tooltip="This contact point is not used in any notification policy and it will not receive any alerts"
+    />
+  );
 }

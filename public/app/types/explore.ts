@@ -15,20 +15,37 @@ import {
   DataQueryResponse,
   ExplorePanelsState,
   SupplementaryQueryType,
+  UrlQueryMap,
+  ExploreCorrelationHelperData,
 } from '@grafana/data';
 import { RichHistorySearchFilters, RichHistorySettings } from 'app/core/utils/richHistoryTypes';
 
 import { CorrelationData } from '../features/correlations/useCorrelations';
 
-export enum ExploreId {
-  left = 'left',
-  right = 'right',
+export type ExploreQueryParams = UrlQueryMap;
+
+export enum CORRELATION_EDITOR_POST_CONFIRM_ACTION {
+  CLOSE_PANE,
+  CHANGE_DATASOURCE,
 }
 
-export type ExploreQueryParams = {
-  left?: string;
-  right?: string;
-};
+export interface CorrelationEditorDetails {
+  editorMode: boolean;
+  dirty: boolean;
+  isExiting: boolean;
+  postConfirmAction?: {
+    // perform an action after a confirmation modal instead of exiting editor mode
+    exploreId: string;
+    action: CORRELATION_EDITOR_POST_CONFIRM_ACTION;
+    changeDatasourceUid?: string;
+  };
+  canSave?: boolean;
+  label?: string;
+  description?: string;
+}
+
+// updates can have any properties
+export interface CorrelationEditorDetailsUpdate extends Partial<CorrelationEditorDetails> {}
 
 /**
  * Global Explore state
@@ -39,15 +56,7 @@ export interface ExploreState {
    */
   syncedTimes: boolean;
 
-  // This being optional wouldn't be needed with noUncheckedIndexedAccess set to true, but it cause more than 5k errors currently.
-  // In order to be safe, we declare each item as pssobly undefined to force existence checks.
-  // This will have the side effect of also forcing undefined checks when iterating over this object entries, but
-  // it's better to error on the safer side.
-  panes: {
-    [paneId in ExploreId]?: ExploreItemState;
-  };
-
-  correlations?: CorrelationData[];
+  panes: Record<string, ExploreItemState | undefined>;
 
   /**
    * Settings for rich history (note: filters are stored per each pane separately)
@@ -64,6 +73,11 @@ export interface ExploreState {
    * True if a warning message of hitting the exceeded number of items has been shown already.
    */
   richHistoryLimitExceededWarningShown: boolean;
+
+  /**
+   * Details on a correlation being created from explore
+   */
+  correlationEditorDetails?: CorrelationEditorDetails;
 
   /**
    * On a split manual resize, we calculate which pane is larger, or if they are roughly the same size. If undefined, it is not split or they are roughly the same size
@@ -135,7 +149,6 @@ export interface ExploreItemState {
    */
   scanRange?: RawTimeRange;
 
-  loading: boolean;
   /**
    * Table model that combines all query table results into a single table.
    */
@@ -186,6 +199,7 @@ export interface ExploreItemState {
   showTrace?: boolean;
   showNodeGraph?: boolean;
   showFlameGraph?: boolean;
+  showCustom?: boolean;
 
   /**
    * History of all queries
@@ -207,6 +221,10 @@ export interface ExploreItemState {
   supplementaryQueries: SupplementaryQueries;
 
   panelsState: ExplorePanelsState;
+
+  correlationEditorHelperData?: ExploreCorrelationHelperData;
+
+  correlations?: CorrelationData[];
 }
 
 export interface ExploreUpdateState {
@@ -245,6 +263,7 @@ export interface ExplorePanelData extends PanelData {
   tableFrames: DataFrame[];
   logsFrames: DataFrame[];
   traceFrames: DataFrame[];
+  customFrames: DataFrame[];
   nodeGraphFrames: DataFrame[];
   rawPrometheusFrames: DataFrame[];
   flameGraphFrames: DataFrame[];

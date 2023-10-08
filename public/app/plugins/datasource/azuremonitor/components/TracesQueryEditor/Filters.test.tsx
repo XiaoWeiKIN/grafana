@@ -16,6 +16,19 @@ import { AzureMonitorQuery } from '../../types';
 import Filters from './Filters';
 import { setFilters } from './setQueryValue';
 
+jest.mock('@grafana/runtime', () => {
+  return {
+    __esModule: true,
+    ...jest.requireActual('@grafana/runtime'),
+    getTemplateSrv: () => ({
+      replace: jest.fn(),
+      getVariables: jest.fn(),
+      updateTimeRange: jest.fn(),
+      containsTemplate: jest.fn(),
+    }),
+  };
+});
+
 const variableOptionGroup = {
   label: 'Template variables',
   options: [],
@@ -201,6 +214,7 @@ describe(`Traces Filters`, () => {
   });
 
   it('should add a trace filter', async () => {
+    jest.spyOn(console, 'warn').mockImplementation();
     let mockQuery = createMockQuery({ azureTraces: { traceTypes: ['customEvents'] } });
     mockQuery.azureTraces = {
       ...mockQuery.azureTraces,
@@ -281,7 +295,7 @@ describe(`Traces Filters`, () => {
       rerender
     );
 
-    const removeButtons = screen.getAllByLabelText('Remove');
+    const removeButtons = screen.getAllByLabelText('Remove filter');
 
     mockQuery = {
       ...mockQuery,
@@ -388,9 +402,9 @@ describe(`Traces Filters`, () => {
         ],
       },
     };
-    const removeLabel = screen.getByLabelText(`Remove test-app-id-2`);
+    const removeLabel = screen.getAllByLabelText(`Remove`);
     await act(async () => {
-      await userEvent.click(removeLabel);
+      await userEvent.click(removeLabel[1]);
     });
 
     rerender(

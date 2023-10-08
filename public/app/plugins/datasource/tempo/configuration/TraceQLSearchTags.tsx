@@ -9,6 +9,7 @@ import { replaceAt } from '../SearchTraceQLEditor/utils';
 import { TraceqlFilter, TraceqlSearchScope } from '../dataquery.gen';
 import { TempoDatasource } from '../datasource';
 import { TempoJsonData } from '../types';
+import { getErrorMessage } from '../utils';
 
 interface Props extends DataSourcePluginOptionsEditorProps<TempoJsonData> {
   datasource?: TempoDatasource;
@@ -22,9 +23,9 @@ export function TraceQLSearchTags({ options, onOptionsChange, datasource }: Prop
 
     try {
       await datasource.languageProvider.start();
-    } catch (e) {
+    } catch (err) {
       // @ts-ignore
-      throw new Error(`${e.statusText}: ${e.data.error}`);
+      throw new Error(getErrorMessage(err.data.message, 'Unable to query Tempo'));
     }
   };
 
@@ -76,6 +77,8 @@ export function TraceQLSearchTags({ options, onOptionsChange, datasource }: Prop
   // filter out tags that already exist in TraceQLSearch editor
   const staticTags = ['duration'];
 
+  const missingTag = options.jsonData.search?.filters?.find((f) => !f.tag);
+
   return (
     <>
       {datasource ? (
@@ -88,6 +91,7 @@ export function TraceQLSearchTags({ options, onOptionsChange, datasource }: Prop
           staticTags={staticTags}
           isTagsLoading={loading}
           hideValues={true}
+          query={'{}'}
         />
       ) : (
         <div>Invalid data source, please create a valid data source and try again</div>
@@ -96,6 +100,9 @@ export function TraceQLSearchTags({ options, onOptionsChange, datasource }: Prop
         <Alert title={'Unable to fetch TraceQL tags'} severity={'error'} topSpacing={1}>
           {error.message}
         </Alert>
+      )}
+      {missingTag && (
+        <Alert title={'Please ensure each filter has a selected tag'} severity={'warning'} topSpacing={1}></Alert>
       )}
     </>
   );

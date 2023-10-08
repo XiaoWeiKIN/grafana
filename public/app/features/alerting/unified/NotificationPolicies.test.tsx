@@ -29,6 +29,8 @@ import { getAllDataSources } from './utils/config';
 import { ALERTMANAGER_NAME_QUERY_KEY } from './utils/constants';
 import { DataSourceType, GRAFANA_RULES_SOURCE_NAME } from './utils/datasource';
 
+import 'core-js/stable/structured-clone';
+
 jest.mock('./api/alertmanager');
 jest.mock('./utils/config');
 jest.mock('app/core/services/context_srv');
@@ -194,7 +196,6 @@ describe('NotificationPolicies', () => {
 
   beforeEach(() => {
     mocks.getAllDataSourcesMock.mockReturnValue(Object.values(dataSources));
-    mocks.contextSrv.hasAccess.mockImplementation(() => true);
     mocks.contextSrv.hasPermission.mockImplementation(() => true);
     mocks.contextSrv.evaluatePermission.mockImplementation(() => []);
     mocks.api.discoverAlertmanagerFeatures.mockResolvedValue({ lazyConfigInit: false });
@@ -382,7 +383,7 @@ describe('NotificationPolicies', () => {
   });
 
   it('hides create and edit button if user does not have permission', async () => {
-    mocks.contextSrv.hasAccess.mockImplementation((action) =>
+    mocks.contextSrv.hasPermission.mockImplementation((action) =>
       [AccessControlAction.AlertingNotificationsRead, AccessControlAction.AlertingNotificationsRead].includes(
         action as AccessControlAction
       )

@@ -11,6 +11,8 @@
 
 import * as ui from '@grafana/schema';
 
+export const pluginVersion = "10.2.0-pre";
+
 export interface Options {
   /**
    * Controls the height of the rows
@@ -59,3 +61,5 @@ export const defaultOptions: Partial<Options> = {
   showTypeIcons: false,
   sortBy: [],
 };
+
+export interface FieldConfig extends ui.TableFieldOptions {}

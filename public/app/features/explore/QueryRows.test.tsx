@@ -5,7 +5,7 @@ import { Provider } from 'react-redux';
 import { DataSourceSrv, setDataSourceSrv } from '@grafana/runtime';
 import { DataQuery } from '@grafana/schema';
 import { configureStore } from 'app/store/configureStore';
-import { ExploreId, ExploreState } from 'app/types';
+import { ExploreState } from 'app/types';
 
 import { UserState } from '../profile/state/reducers';
 
@@ -56,10 +56,11 @@ function setup(queries: DataQuery[]) {
         richHistory: [],
         datasourceInstance: datasources['someDs-uid'],
         queries,
+        correlations: [],
       },
     },
+    correlationEditorDetails: { editorMode: false, dirty: false, isExiting: false },
     syncedTimes: false,
-    correlations: [],
     richHistoryStorageFull: false,
     richHistoryLimitExceededWarningShown: false,
   };
@@ -77,7 +78,7 @@ describe('Explore QueryRows', () => {
 
     render(
       <Provider store={store}>
-        <QueryRows exploreId={ExploreId.left} />
+        <QueryRows exploreId={'left'} />
       </Provider>
     );
 

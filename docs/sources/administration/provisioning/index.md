@@ -5,6 +5,10 @@ description: Describes provisioning settings for Grafana using configuration fil
 keywords:
   - grafana
   - provisioning
+labels:
+  products:
+    - enterprise
+    - oss
 title: Provision Grafana
 weight: 600
 ---
@@ -222,6 +226,7 @@ Data sources tagged with _HTTP\*_ communicate using the HTTP protocol, which inc
 | cacheLevel                    | string  | Prometheus                                                       | Determines the duration of the browser cache. Valid values include: `Low`, `Medium`, `High`, and `None`. This field is configurable when you enable the `prometheusResourceBrowserCache` feature flag.                                                                                        |
 | incrementalQuerying           | string  | Prometheus                                                       | Experimental: Turn on incremental querying to enhance dashboard reload performance with slow data sources                                                                                                                                                                                     |
 | incrementalQueryOverlapWindow | string  | Prometheus                                                       | Experimental: Configure incremental query overlap window. Requires a valid duration string, i.e. `180s` or `15m` Default value is `10m` (10 minutes).                                                                                                                                         |
+| disableRecordingRules         | boolean | Prometheus                                                       | Experimental: Turn off Prometheus recording rules                                                                                                                                                                                                                                             |
 | implementation                | string  | AlertManager                                                     | The implementation of the AlertManager data source, such as `prometheus`, `cortex` or `mimir`                                                                                                                                                                                                 |
 | handleGrafanaManagedAlerts    | boolean | AlertManager                                                     | When enabled, Grafana-managed alerts are sent to this Alertmanager                                                                                                                                                                                                                            |
 
@@ -338,7 +343,7 @@ providers:
 
 When Grafana starts, it will update/insert all dashboards available in the configured path. Then later on poll that path every **updateIntervalSeconds** and look for updated json files and update/insert those into the database.
 
-> **Note:** Dashboards are provisioned to the General folder if the `folder` option is missing or empty.
+> **Note:** Dashboards are provisioned to the root level if the `folder` option is missing or empty.
 
 #### Making changes to a provisioned dashboard
 
@@ -366,8 +371,8 @@ By default, Grafana deletes dashboards in the database if the file is removed. Y
 
 {{% admonition type="note" %}}
 Provisioning allows you to overwrite existing dashboards
-which leads to problems if you re-use settings that are supposed to be unique.
-Be careful not to re-use the same `title` multiple times within a folder
+which leads to problems if you reuse settings that are supposed to be unique.
+Be careful not to reuse the same `title` multiple times within a folder
 or `uid` within the same installation as this will cause weird behaviors.
 {{% /admonition %}}
 
@@ -408,7 +413,7 @@ providers:
 {{% /admonition %}}
 
 {{% admonition type="note" %}}
-To provision dashboards to the General folder, store them in the root of your `path`.
+To provision dashboards to the root level, store them in the root of your `path`.
 {{% /admonition %}}
 
 ## Alerting

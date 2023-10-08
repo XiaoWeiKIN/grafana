@@ -1,10 +1,10 @@
 import { css } from '@emotion/css';
 import { once } from 'lodash';
 import React, { useState } from 'react';
-import { DropzoneOptions } from 'react-dropzone';
 
 import { DataSourceInstanceSettings, DataSourceRef, GrafanaTheme2 } from '@grafana/data';
-import { reportInteraction } from '@grafana/runtime';
+import { config, reportInteraction } from '@grafana/runtime';
+import { DataQuery } from '@grafana/schema';
 import {
   Modal,
   FileDropzone,
@@ -14,7 +14,12 @@ import {
   Input,
   Icon,
 } from '@grafana/ui';
+import { t, Trans } from 'app/core/internationalization';
 import * as DFImport from 'app/features/dataframe-import';
+import { GrafanaQuery } from 'app/plugins/datasource/grafana/types';
+import { getFileDropToQueryHandler } from 'app/plugins/datasource/grafana/utils';
+
+import { useDatasource } from '../../hooks';
 
 import { AddNewDataSourceButton } from './AddNewDataSourceButton';
 import { BuiltInDataSourceList } from './BuiltInDataSourceList';
@@ -31,19 +36,41 @@ const INTERACTION_ITEM = {
   DISMISS: 'dismiss',
 };
 
-interface DataSourceModalProps {
-  onChange: (ds: DataSourceInstanceSettings) => void;
+export interface DataSourceModalProps {
+  onChange: (ds: DataSourceInstanceSettings, defaultQueries?: DataQuery[] | GrafanaQuery[]) => void;
   current: DataSourceRef | string | null | undefined;
   onDismiss: () => void;
   recentlyUsed?: string[];
-  enableFileUpload?: boolean;
-  fileUploadOptions?: DropzoneOptions;
   reportedInteractionFrom?: string;
+
+  // DS filters
+  filter?: (ds: DataSourceInstanceSettings) => boolean;
+  tracing?: boolean;
+  mixed?: boolean;
+  dashboard?: boolean;
+  metrics?: boolean;
+  type?: string | string[];
+  annotations?: boolean;
+  variables?: boolean;
+  alerting?: boolean;
+  pluginId?: string;
+  logs?: boolean;
+  uploadFile?: boolean;
 }
 
 export function DataSourceModal({
-  enableFileUpload,
-  fileUploadOptions,
+  tracing,
+  dashboard,
+  mixed,
+  metrics,
+  type,
+  annotations,
+  variables,
+  alerting,
+  pluginId,
+  logs,
+  uploadFile,
+  filter,
   onChange,
   current,
   onDismiss,
@@ -74,9 +101,50 @@ export function DataSourceModal({
     [analyticsInteractionSrc]
   );
 
+  const grafanaDS = useDatasource('-- Grafana --');
+
+  const onFileDrop = getFileDropToQueryHandler((query, fileRejections) => {
+    if (!grafanaDS) {
+      return;
+    }
+    onChange(grafanaDS, [query]);
+
+    reportInteraction(INTERACTION_EVENT_NAME, {
+      item: INTERACTION_ITEM.UPLOAD_FILE,
+      src: analyticsInteractionSrc,
+    });
+
+    if (fileRejections.length < 1) {
+      onDismiss();
+    }
+  });
+
+  // Built-in data sources used twice because of mobile layout adjustments
+  // In movile the list is appended to the bottom of the DS list
+  const BuiltInList = ({ className }: { className?: string }) => {
+    return (
+      <BuiltInDataSourceList
+        className={className}
+        onChange={onChangeDataSource}
+        current={current}
+        filter={filter}
+        variables={variables}
+        tracing={tracing}
+        metrics={metrics}
+        type={type}
+        annotations={annotations}
+        alerting={alerting}
+        pluginId={pluginId}
+        logs={logs}
+        dashboard={dashboard}
+        mixed={mixed}
+      />
+    );
+  };
+
   return (
     <Modal
-      title="Select data source"
+      title={t('data-source-picker.modal.title', 'Select data source')}
       closeOnEscape={true}
       closeOnBackdropClick={true}
       isOpen={true}
@@ -87,11 +155,12 @@ export function DataSourceModal({
     >
       <div className={styles.leftColumn}>
         <Input
+          type="search"
           autoFocus
           className={styles.searchInput}
           value={search}
           prefix={<Icon name="search" />}
-          placeholder="Search data source"
+          placeholder={t('data-source-picker.modal.input-placeholder', 'Select data source')}
           onChange={(e) => {
             setSearch(e.currentTarget.value);
             reportSearchUsageOnce();
@@ -99,10 +168,6 @@ export function DataSourceModal({
         />
         <CustomScrollbar>
           <DataSourceList
-            dashboard={false}
-            mixed={false}
-            variables
-            filter={(ds) => matchDataSourceWithSearch(ds, search) && !ds.meta.builtIn}
             onChange={onChangeDataSource}
             current={current}
             onClickEmptyStateCTA={() =>
@@ -111,20 +176,27 @@ export function DataSourceModal({
                 src: analyticsInteractionSrc,
               })
             }
+            filter={(ds) => (filter ? filter?.(ds) : true) && matchDataSourceWithSearch(ds, search) && !ds.meta.builtIn}
+            variables={variables}
+            tracing={tracing}
+            metrics={metrics}
+            type={type}
+            annotations={annotations}
+            alerting={alerting}
+            pluginId={pluginId}
+            logs={logs}
+            dashboard={dashboard}
+            mixed={mixed}
           />
-          <BuiltInDataSourceList
-            className={styles.appendBuiltInDataSourcesList}
-            onChange={onChangeDataSource}
-            current={current}
-          />
+          <BuiltInList className={styles.appendBuiltInDataSourcesList} />
         </CustomScrollbar>
       </div>
       <div className={styles.rightColumn}>
         <div className={styles.builtInDataSources}>
           <CustomScrollbar className={styles.builtInDataSourcesList}>
-            <BuiltInDataSourceList onChange={onChangeDataSource} current={current} />
+            <BuiltInList />
           </CustomScrollbar>
-          {enableFileUpload && (
+          {uploadFile && config.featureToggles.editPanelCSVDragAndDrop && (
             <FileDropzone
               readAs="readAsArrayBuffer"
               fileListRenderer={() => undefined}
@@ -132,15 +204,7 @@ export function DataSourceModal({
                 maxSize: DFImport.maxFileSize,
                 multiple: false,
                 accept: DFImport.acceptedFiles,
-                ...fileUploadOptions,
-                onDrop: (...args) => {
-                  fileUploadOptions?.onDrop?.(...args);
-                  onDismiss();
-                  reportInteraction(INTERACTION_EVENT_NAME, {
-                    item: INTERACTION_ITEM.UPLOAD_FILE,
-                    src: analyticsInteractionSrc,
-                  });
-                },
+                onDrop: onFileDrop,
               }}
             >
               <FileDropzoneDefaultChildren />
@@ -148,7 +212,11 @@ export function DataSourceModal({
           )}
         </div>
         <div className={styles.newDSSection}>
-          <span className={styles.newDSDescription}>Open a new tab and configure a data source</span>
+          <span className={styles.newDSDescription}>
+            <Trans i18nKey="data-source-picker.modal.configure-new-data-source">
+              Open a new tab and configure a data source
+            </Trans>
+          </span>
           <AddNewDataSourceButton
             variant="secondary"
             onClick={() => {

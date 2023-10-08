@@ -14,7 +14,7 @@ export function importPanelPlugin(id: string): Promise<PanelPlugin> {
     return loaded;
   }
 
-  const meta = config.panels[id] || Object.values(config.panels).find((p) => p.alias === id);
+  const meta = getPanelPluginMeta(id);
 
   if (!meta) {
     throw new Error(`Plugin ${id} not found`);
@@ -26,6 +26,23 @@ export function importPanelPlugin(id: string): Promise<PanelPlugin> {
   }
 
   return promiseCache[id];
+}
+
+export function hasPanelPlugin(id: string): boolean {
+  return !!getPanelPluginMeta(id);
+}
+
+export function getPanelPluginMeta(id: string): PanelPluginMeta {
+  const v = config.panels[id];
+  if (!v) {
+    // Check alias values before failing
+    for (const p of Object.values(config.panels)) {
+      if (p.aliasIDs?.includes(id)) {
+        return p;
+      }
+    }
+  }
+  return v;
 }
 
 export function importPanelPluginFromMeta(meta: PanelPluginMeta): Promise<PanelPlugin> {
@@ -45,7 +62,7 @@ function getPanelPlugin(meta: PanelPluginMeta): Promise<PanelPlugin> {
   })
     .then((pluginExports) => {
       if (pluginExports.plugin) {
-        return pluginExports.plugin as PanelPlugin;
+        return pluginExports.plugin;
       } else if (pluginExports.PanelCtrl) {
         const plugin = new PanelPlugin(null);
         plugin.angularPanelCtrl = pluginExports.PanelCtrl;

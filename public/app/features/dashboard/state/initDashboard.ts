@@ -6,6 +6,7 @@ import { createErrorNotification } from 'app/core/copy/appNotification';
 import { backendSrv } from 'app/core/services/backend_srv';
 import { KeybindingSrv } from 'app/core/services/keybindingSrv';
 import store from 'app/core/store';
+import { newBrowseDashboardsEnabled } from 'app/features/browse-dashboards/featureFlag';
 import { dashboardLoaderSrv } from 'app/features/dashboard/services/DashboardLoaderSrv';
 import { DashboardSrv, getDashboardSrv } from 'app/features/dashboard/services/DashboardSrv';
 import { getTimeSrv, TimeSrv } from 'app/features/dashboard/services/TimeSrv';
@@ -26,6 +27,7 @@ import {
 import { createDashboardQueryRunner } from '../../query/state/DashboardQueryRunner/DashboardQueryRunner';
 import { initVariablesTransaction } from '../../variables/state/actions';
 import { getIfExistsLastKey } from '../../variables/state/selectors';
+import { trackDashboardLoaded } from '../utils/tracking';
 
 import { DashboardModel } from './DashboardModel';
 import { PanelModel } from './PanelModel';
@@ -42,6 +44,7 @@ export interface InitDashboardArgs {
   routeName?: string;
   fixUrl: boolean;
   keybindingSrv: KeybindingSrv;
+  dashboardDto?: DashboardDTO;
 }
 
 async function fetchDashboard(
@@ -78,15 +81,25 @@ async function fetchDashboard(
       case DashboardRoutes.Public: {
         return await dashboardLoaderSrv.loadDashboard('public', args.urlSlug, args.accessToken);
       }
+      case DashboardRoutes.Embedded: {
+        if (args.dashboardDto) {
+          return args.dashboardDto;
+        }
+      }
       case DashboardRoutes.Normal: {
         const dashDTO: DashboardDTO = await dashboardLoaderSrv.loadDashboard(args.urlType, args.urlSlug, args.urlUid);
 
         // only the folder API has information about ancestors
         // get parent folder (if it exists) and put it in the store
         // this will be used to populate the full breadcrumb trail
-        if (config.featureToggles.nestedFolders && dashDTO.meta.folderUid) {
-          await dispatch(getFolderByUid(dashDTO.meta.folderUid));
+        if (newBrowseDashboardsEnabled() && dashDTO.meta.folderUid) {
+          try {
+            await dispatch(getFolderByUid(dashDTO.meta.folderUid));
+          } catch (err) {
+            console.warn('Error fetching parent folder', dashDTO.meta.folderUid, 'for dashboard', err);
+          }
         }
+
         if (args.fixUrl && dashDTO.meta.url && !playlistSrv.isPlaying) {
           // check if the current url is correct (might be old slug)
           const dashboardUrl = locationUtil.stripBaseFromUrl(dashDTO.meta.url);
@@ -107,7 +120,7 @@ async function fetchDashboard(
         // only the folder API has information about ancestors
         // get parent folder (if it exists) and put it in the store
         // this will be used to populate the full breadcrumb trail
-        if (config.featureToggles.nestedFolders && args.urlFolderUid) {
+        if (newBrowseDashboardsEnabled() && args.urlFolderUid) {
           await dispatch(getFolderByUid(args.urlFolderUid));
         }
         return getNewDashboardModelData(args.urlFolderUid, args.panelType);
@@ -169,6 +182,8 @@ export function initDashboard(args: InitDashboardArgs): ThunkResult<void> {
 
     // fetch dashboard data
     const dashDTO = await fetchDashboard(args, dispatch, getState);
+
+    const versionBeforeMigration = dashDTO?.dashboard?.version;
 
     // returns null if there was a redirect or error
     if (!dashDTO) {
@@ -270,6 +285,8 @@ export function initDashboard(args: InitDashboardArgs): ThunkResult<void> {
         queries: getQueriesByDatasource(dashboard.panels),
       })
     );
+
+    trackDashboardLoaded(dashboard, versionBeforeMigration);
 
     // yay we are done
     dispatch(dashboardInitCompleted(dashboard));

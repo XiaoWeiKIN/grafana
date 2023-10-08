@@ -5,8 +5,7 @@ import { contextSrv } from 'app/core/core';
 import { getBackendSrv } from 'app/core/services/backend_srv';
 import { AccessControlAction } from 'app/types';
 
-import { isGrafanaAdmin } from './permissions';
-import { CatalogPlugin, LocalPlugin, RemotePlugin, Version } from './types';
+import { CatalogPlugin, LocalPlugin, RemotePlugin, RemotePluginStatus, Version } from './types';
 
 export function mergeLocalsAndRemotes(
   local: LocalPlugin[] = [],
@@ -17,21 +16,24 @@ export function mergeLocalsAndRemotes(
   const errorByPluginId = groupErrorsByPluginId(errors);
 
   // add locals
-  local.forEach((l) => {
-    const remotePlugin = remote.find((r) => r.slug === l.id);
-    const error = errorByPluginId[l.id];
+  local.forEach((localPlugin) => {
+    const remoteCounterpart = remote.find((r) => r.slug === localPlugin.id);
+    const error = errorByPluginId[localPlugin.id];
 
-    if (!remotePlugin) {
-      catalogPlugins.push(mergeLocalAndRemote(l, undefined, error));
+    if (!remoteCounterpart) {
+      catalogPlugins.push(mergeLocalAndRemote(localPlugin, undefined, error));
     }
   });
 
   // add remote
-  remote.forEach((r) => {
-    const localPlugin = local.find((l) => l.id === r.slug);
-    const error = errorByPluginId[r.slug];
+  remote.forEach((remotePlugin) => {
+    const localCounterpart = local.find((l) => l.id === remotePlugin.slug);
+    const error = errorByPluginId[remotePlugin.slug];
+    const shouldSkip = remotePlugin.status === RemotePluginStatus.Deprecated && !localCounterpart; // We are only listing deprecated plugins in case they are installed.
 
-    catalogPlugins.push(mergeLocalAndRemote(localPlugin, r, error));
+    if (!shouldSkip) {
+      catalogPlugins.push(mergeLocalAndRemote(localCounterpart, remotePlugin, error));
+    }
   });
 
   return catalogPlugins;
@@ -62,6 +64,7 @@ export function mapRemoteToCatalog(plugin: RemotePlugin, error?: PluginError): C
     updatedAt,
     createdAt: publishedAt,
     status,
+    angularDetected,
   } = plugin;
 
   const isDisabled = !!error || isDisabledSecretsPlugin(typeCode);
@@ -85,11 +88,13 @@ export function mapRemoteToCatalog(plugin: RemotePlugin, error?: PluginError): C
     isPublished: true,
     isInstalled: isDisabled,
     isDisabled: isDisabled,
+    isDeprecated: status === RemotePluginStatus.Deprecated,
     isCore: plugin.internal,
     isDev: false,
-    isEnterprise: status === 'enterprise',
+    isEnterprise: status === RemotePluginStatus.Enterprise,
     type: typeCode,
     error: error?.errorCode,
+    angularDetected,
   };
 }
 
@@ -105,6 +110,7 @@ export function mapLocalToCatalog(plugin: LocalPlugin, error?: PluginError): Cat
     signatureType,
     hasUpdate,
     accessControl,
+    angularDetected,
   } = plugin;
 
   const isDisabled = !!error || isDisabledSecretsPlugin(type);
@@ -127,11 +133,13 @@ export function mapLocalToCatalog(plugin: LocalPlugin, error?: PluginError): Cat
     isDisabled: isDisabled,
     isCore: signature === 'internal',
     isPublished: false,
+    isDeprecated: false,
     isDev: Boolean(dev),
     isEnterprise: false,
     type,
     error: error?.errorCode,
     accessControl: accessControl,
+    angularDetected,
   };
 }
 
@@ -166,9 +174,10 @@ export function mapToCatalogPlugin(local?: LocalPlugin, remote?: RemotePlugin, e
     },
     isCore: Boolean(remote?.internal || local?.signature === PluginSignatureStatus.internal),
     isDev: Boolean(local?.dev),
-    isEnterprise: remote?.status === 'enterprise',
+    isEnterprise: remote?.status === RemotePluginStatus.Enterprise,
     isInstalled: Boolean(local) || isDisabled,
     isDisabled: isDisabled,
+    isDeprecated: remote?.status === RemotePluginStatus.Deprecated,
     isPublished: true,
     // TODO<check if we would like to keep preferring the remote version>
     name: remote?.name || local?.name || '',
@@ -186,6 +195,7 @@ export function mapToCatalogPlugin(local?: LocalPlugin, remote?: RemotePlugin, e
     error: error?.errorCode,
     // Only local plugins have access control metadata
     accessControl: local?.accessControl,
+    angularDetected: local?.angularDetected || remote?.angularDetected,
   };
 }
 
@@ -218,10 +228,10 @@ export const sortPlugins = (plugins: CatalogPlugin[], sortBy: Sorters) => {
 };
 
 function groupErrorsByPluginId(errors: PluginError[] = []): Record<string, PluginError | undefined> {
-  return errors.reduce((byId, error) => {
+  return errors.reduce<Record<string, PluginError | undefined>>((byId, error) => {
     byId[error.pluginId] = error;
     return byId;
-  }, {} as Record<string, PluginError | undefined>);
+  }, {});
 }
 
 function getPluginSignature(options: {
@@ -246,7 +256,7 @@ function getPluginSignature(options: {
     return local.signature;
   }
 
-  if (remote?.signatureType || remote?.versionSignatureType) {
+  if (remote?.signatureType && remote?.versionSignatureType) {
     return PluginSignatureStatus.valid;
   }
 
@@ -278,7 +288,7 @@ export const hasInstallControlWarning = (
   latestCompatibleVersion?: Version
 ) => {
   const isExternallyManaged = config.pluginAdminExternalManageEnabled;
-  const hasPermission = contextSrv.hasAccess(AccessControlAction.PluginsInstall, isGrafanaAdmin());
+  const hasPermission = contextSrv.hasPermission(AccessControlAction.PluginsInstall);
   const isCompatible = Boolean(latestCompatibleVersion);
   return (
     plugin.type === PluginType.renderer ||
@@ -292,11 +302,11 @@ export const hasInstallControlWarning = (
   );
 };
 
-export const isLocalPluginVisible = (p: LocalPlugin) => isPluginVisible(p.id);
+export const isLocalPluginVisibleByConfig = (p: LocalPlugin) => isNotHiddenByConfig(p.id);
 
-export const isRemotePluginVisible = (p: RemotePlugin) => isPluginVisible(p.slug);
+export const isRemotePluginVisibleByConfig = (p: RemotePlugin) => isNotHiddenByConfig(p.slug);
 
-function isPluginVisible(id: string) {
+function isNotHiddenByConfig(id: string) {
   const { pluginCatalogHiddenPlugins }: { pluginCatalogHiddenPlugins: string[] } = config;
 
   return !pluginCatalogHiddenPlugins.includes(id);

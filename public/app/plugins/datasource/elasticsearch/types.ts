@@ -14,6 +14,7 @@ import {
   MovingAverage as SchemaMovingAverage,
   BucketAggregation,
   Logs as SchemaLogs,
+  Elasticsearch,
 } from './dataquery.gen';
 
 export * from './dataquery.gen';
@@ -63,6 +64,8 @@ export interface ElasticsearchOptions extends DataSourceJsonData {
   dataLinks?: DataLinkConfig[];
   includeFrozen?: boolean;
   index?: string;
+  sigV4Auth?: boolean;
+  oauthPassThru?: boolean;
 }
 
 export type QueryType = 'metrics' | 'logs' | 'raw_data' | 'raw_document';
@@ -121,3 +124,17 @@ export type DataLinkConfig = {
   urlDisplayLabel?: string;
   datasourceUid?: string;
 };
+
+export interface ElasticsearchAnnotationQuery {
+  target: Elasticsearch;
+  timeField?: string;
+  titleField?: string;
+  timeEndField?: string;
+  query?: string;
+  tagsField?: string;
+  textField?: string;
+  // @deprecated index is deprecated and will be removed in the future
+  index?: string;
+}
+
+export type RangeMap = Record<string, { from: number; to: number; format: string }>;

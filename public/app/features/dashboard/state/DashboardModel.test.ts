@@ -1,7 +1,7 @@
 import { keys as _keys } from 'lodash';
 
 import { dateTime, TimeRange, VariableHide } from '@grafana/data';
-import { defaultVariableModel } from '@grafana/schema';
+import { Dashboard, defaultVariableModel } from '@grafana/schema';
 import { contextSrv } from 'app/core/services/context_srv';
 
 import { getDashboardModel } from '../../../../test/helpers/getDashboardModel';
@@ -49,6 +49,29 @@ describe('DashboardModel', () => {
 
     it('should have default properties', () => {
       expect(model.panels.length).toBe(0);
+    });
+  });
+
+  describe('when storing original dashboard data', () => {
+    let originalDashboard: Dashboard = {
+      editable: true,
+      graphTooltip: 0,
+      schemaVersion: 1,
+      timezone: '',
+      title: 'original.title',
+    };
+    let model: DashboardModel;
+
+    beforeEach(() => {
+      model = new DashboardModel(originalDashboard);
+    });
+
+    it('should be returned from getOriginalDashboard without modifications', () => {
+      expect(model.getOriginalDashboard()).toEqual(originalDashboard);
+    });
+
+    it('should return a copy of the provided object', () => {
+      expect(model.getOriginalDashboard()).not.toBe(originalDashboard);
     });
   });
 
@@ -1090,10 +1113,13 @@ describe('DashboardModel', () => {
         panels: [
           { id: 1, type: 'row', collapsed: false, panels: [], gridPos: { x: 0, y: 0, w: 24, h: 6 } },
           { id: 2, type: 'graph', gridPos: { x: 0, y: 7, w: 12, h: 2 } },
-          { id: 3, type: 'graph', gridPos: { x: 0, y: 7, w: 12, h: 2 }, repeatPanelId: 2 },
+          { id: 3, type: 'graph', gridPos: { x: 0, y: 7, w: 12, h: 2 } },
         ],
       });
+
       const panel = dashboard.getPanelById(3);
+      panel!.repeatPanelId = 1;
+
       expect(dashboard.canEditPanel(panel)).toBe(false);
     });
 

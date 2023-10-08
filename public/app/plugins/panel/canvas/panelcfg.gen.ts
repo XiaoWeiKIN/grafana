@@ -10,8 +10,6 @@
 
 import * as ui from '@grafana/schema';
 
-export const PanelCfgModelVersion = Object.freeze([0, 0]);
-
 export enum HorizontalConstraint {
   Center = 'center',
   Left = 'left',
@@ -59,6 +57,11 @@ export interface BackgroundConfig {
 export interface LineConfig {
   color?: ui.ColorDimensionConfig;
   width?: number;
+}
+
+export enum HttpRequestMethod {
+  GET = 'GET',
+  POST = 'POST',
 }
 
 export interface ConnectionCoordinates {

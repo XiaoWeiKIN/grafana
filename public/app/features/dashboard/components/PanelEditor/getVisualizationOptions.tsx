@@ -78,6 +78,7 @@ export function getVisualizationOptions(props: OptionPaneRenderProps): OptionsPa
     return (categoryIndex[categoryName] = new OptionsPaneCategoryDescriptor({
       title: categoryName,
       id: categoryName,
+      sandboxId: plugin.meta.id,
     }));
   };
 
@@ -152,10 +153,10 @@ export function fillOptionsPaneItems(
   supplier: PanelOptionsSupplier<any>,
   access: NestedValueAccess,
   getOptionsPaneCategory: categoryGetter,
-  context: StandardEditorContext<any, any>,
+  context: StandardEditorContext<any>,
   parentCategory?: OptionsPaneCategoryDescriptor
 ) {
-  const builder = new PanelOptionsEditorBuilder<any>();
+  const builder = new PanelOptionsEditorBuilder();
   supplier(builder, context);
 
   for (const pluginOption of builder.getItems()) {
