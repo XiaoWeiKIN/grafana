@@ -1,18 +1,14 @@
-import { omit } from 'lodash';
 import * as React from 'react';
-import { useEffect, useState } from 'react';
-import { useAsync } from 'react-use';
+import { useMemo } from 'react';
 
 import { locationService } from '@grafana/runtime';
 import { Alert, LoadingPlaceholder } from '@grafana/ui';
 
 import { GrafanaRouteComponentProps } from '../../../../../core/navigation/types';
-import { useDispatch } from '../../../../../types';
-import { RuleIdentifier, RuleWithLocation } from '../../../../../types/unified-alerting';
-import { RulerRuleDTO } from '../../../../../types/unified-alerting-dto';
-import { fetchEditableRuleAction, fetchRulesSourceBuildInfoAction } from '../../state/actions';
-import { RuleFormValues } from '../../types/rule-form';
-import { rulerRuleToFormValues } from '../../utils/rule-form';
+import { RuleIdentifier } from '../../../../../types/unified-alerting';
+import { useRuleWithLocation } from '../../hooks/useCombinedRule';
+import { stringifyErrorLike } from '../../utils/misc';
+import { formValuesFromExistingRule } from '../../utils/rule-form';
 import * as ruleId from '../../utils/rule-id';
 import { isGrafanaRulerRule } from '../../utils/rules';
 import { createUrl } from '../../utils/url';
@@ -21,92 +17,92 @@ import { ModifyExportRuleForm } from '../rule-editor/alert-rule-form/ModifyExpor
 
 interface GrafanaModifyExportProps extends GrafanaRouteComponentProps<{ id?: string }> {}
 
-// TODO Duplicated in AlertRuleForm
-const ignoreHiddenQueries = (ruleDefinition: RuleFormValues): RuleFormValues => {
-  return {
-    ...ruleDefinition,
-    queries: ruleDefinition.queries?.map((query) => omit(query, 'model.hide')),
-  };
-};
-
-function formValuesFromExistingRule(rule: RuleWithLocation<RulerRuleDTO>) {
-  return ignoreHiddenQueries(rulerRuleToFormValues(rule));
-}
-
 export default function GrafanaModifyExport({ match }: GrafanaModifyExportProps) {
-  const dispatch = useDispatch();
-
-  // Get rule source build info
-  const [ruleIdentifier, setRuleIdentifier] = useState<RuleIdentifier | undefined>(undefined);
-
-  useEffect(() => {
-    const identifier = ruleId.tryParse(match.params.id, true);
-    setRuleIdentifier(identifier);
+  const ruleIdentifier = useMemo<RuleIdentifier | undefined>(() => {
+    return ruleId.tryParse(match.params.id, true);
   }, [match.params.id]);
 
-  const { loading: loadingBuildInfo = true } = useAsync(async () => {
-    if (ruleIdentifier) {
-      await dispatch(fetchRulesSourceBuildInfoAction({ rulesSourceName: ruleIdentifier.ruleSourceName }));
-    }
-  }, [dispatch, ruleIdentifier]);
-
-  // Get rule
-  const {
-    loading,
-    value: alertRule,
-    error,
-  } = useAsync(async () => {
-    if (!ruleIdentifier) {
-      return;
-    }
-    return await dispatch(fetchEditableRuleAction(ruleIdentifier)).unwrap();
-  }, [ruleIdentifier, loadingBuildInfo]);
-
   if (!ruleIdentifier) {
-    return <div>Rule not found</div>;
+    return (
+      <ModifyExportWrapper>
+        <Alert title="Invalid rule ID" severity="error">
+          The rule UID in the page URL is invalid. Please check the URL and try again.
+        </Alert>
+      </ModifyExportWrapper>
+    );
   }
 
+  return (
+    <ModifyExportWrapper>
+      <RuleModifyExport ruleIdentifier={ruleIdentifier} />
+    </ModifyExportWrapper>
+  );
+}
+
+interface ModifyExportWrapperProps {
+  children: React.ReactNode;
+}
+
+function ModifyExportWrapper({ children }: ModifyExportWrapperProps) {
+  return (
+    <AlertingPageWrapper
+      navId="alert-list"
+      pageNav={{
+        text: 'Modify export',
+        subTitle:
+          'Modify the current alert rule and export the rule definition in the format of your choice. Any changes you make will not be saved.',
+      }}
+    >
+      {children}
+    </AlertingPageWrapper>
+  );
+}
+
+function RuleModifyExport({ ruleIdentifier }: { ruleIdentifier: RuleIdentifier }) {
+  const { loading, error, result: rulerRule } = useRuleWithLocation({ ruleIdentifier: ruleIdentifier });
+
   if (loading) {
-    return <LoadingPlaceholder text="Loading the rule" />;
+    return <LoadingPlaceholder text="Loading the rule..." />;
   }
 
   if (error) {
     return (
       <Alert title="Cannot load modify export" severity="error">
-        {error.message}
+        {stringifyErrorLike(error)}
       </Alert>
     );
   }
 
-  if (!alertRule && !loading && !loadingBuildInfo) {
+  if (!rulerRule && !loading) {
     // alert rule does not exist
     return (
-      <AlertingPageWrapper isLoading={loading} pageId="alert-list" pageNav={{ text: 'Modify export' }}>
-        <Alert
-          title="Cannot load the rule. The rule does not exist"
-          buttonContent="Go back to alert list"
-          onRemove={() => locationService.replace(createUrl('/alerting/list'))}
-        />
-      </AlertingPageWrapper>
+      <Alert
+        title="Cannot load the rule. The rule does not exist"
+        buttonContent="Go back to alert list"
+        onRemove={() => locationService.replace(createUrl('/alerting/list'))}
+      />
     );
   }
 
-  if (alertRule && !isGrafanaRulerRule(alertRule.rule)) {
+  if (rulerRule && !isGrafanaRulerRule(rulerRule.rule)) {
     // alert rule exists but is not a grafana-managed rule
     return (
-      <AlertingPageWrapper isLoading={loading} pageId="alert-list" pageNav={{ text: 'Modify export' }}>
-        <Alert
-          title="This rule is not a Grafana-managed alert rule"
-          buttonContent="Go back to alert list"
-          onRemove={() => locationService.replace(createUrl('/alerting/list'))}
-        />
-      </AlertingPageWrapper>
+      <Alert
+        title="This rule is not a Grafana-managed alert rule"
+        buttonContent="Go back to alert list"
+        onRemove={() => locationService.replace(createUrl('/alerting/list'))}
+      />
     );
   }
 
-  return (
-    <AlertingPageWrapper isLoading={loading} pageId="alert-list" pageNav={{ text: 'Modify export' }}>
-      {alertRule && <ModifyExportRuleForm ruleForm={alertRule ? formValuesFromExistingRule(alertRule) : undefined} />}
-    </AlertingPageWrapper>
-  );
+  if (rulerRule && isGrafanaRulerRule(rulerRule.rule)) {
+    return (
+      <ModifyExportRuleForm
+        ruleForm={formValuesFromExistingRule(rulerRule)}
+        alertUid={rulerRule.rule.grafana_alert.uid}
+      />
+    );
+  }
+
+  return <Alert title="Unknown error" />;
 }

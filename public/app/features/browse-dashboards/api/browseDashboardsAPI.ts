@@ -3,12 +3,23 @@ import { lastValueFrom } from 'rxjs';
 
 import { isTruthy, locationUtil } from '@grafana/data';
 import { BackendSrvRequest, getBackendSrv, locationService } from '@grafana/runtime';
+import { Dashboard } from '@grafana/schema';
 import { notifyApp } from 'app/core/actions';
 import { createSuccessNotification } from 'app/core/copy/appNotification';
 import { contextSrv } from 'app/core/core';
+import { getDashboardAPI } from 'app/features/dashboard/api/dashboard_api';
 import { SaveDashboardCommand } from 'app/features/dashboard/components/SaveDashboard/types';
 import { dashboardWatcher } from 'app/features/live/dashboard/dashboardWatcher';
-import { DashboardDTO, DescendantCount, DescendantCountDTO, FolderDTO, SaveDashboardResponseDTO } from 'app/types';
+import {
+  DashboardDTO,
+  DescendantCount,
+  DescendantCountDTO,
+  FolderDTO,
+  FolderListItemDTO,
+  ImportDashboardResponseDTO,
+  PermissionLevelString,
+  SaveDashboardResponseDTO,
+} from 'app/types';
 
 import { refetchChildren, refreshParents } from '../state';
 import { DashboardTreeSelection } from '../types';
@@ -26,6 +37,20 @@ interface DeleteItemsArgs {
 
 interface MoveItemsArgs extends DeleteItemsArgs {
   destinationUID: string;
+}
+
+export interface ImportInputs {
+  name: string;
+  type: string;
+  value: string;
+  pluginId?: string;
+}
+
+interface ImportOptions {
+  dashboard: Dashboard;
+  overwrite: boolean;
+  inputs: ImportInputs[];
+  folderUid: string;
 }
 
 function createBackendSrvBaseQuery({ baseURL }: { baseURL: string }): BaseQueryFn<RequestOptions> {
@@ -47,16 +72,32 @@ function createBackendSrvBaseQuery({ baseURL }: { baseURL: string }): BaseQueryF
   return backendSrvBaseQuery;
 }
 
+export interface ListFolderQueryArgs {
+  page: number;
+  parentUid: string | undefined;
+  limit: number;
+  permission?: PermissionLevelString;
+}
+
 export const browseDashboardsAPI = createApi({
   tagTypes: ['getFolder'],
   reducerPath: 'browseDashboardsAPI',
   baseQuery: createBackendSrvBaseQuery({ baseURL: '/api' }),
   endpoints: (builder) => ({
+    listFolders: builder.query<FolderListItemDTO[], ListFolderQueryArgs>({
+      providesTags: (result) => result?.map((folder) => ({ type: 'getFolder', id: folder.uid })) ?? [],
+      query: ({ parentUid, limit, page, permission }) => ({
+        url: '/folders',
+        params: { parentUid, limit, page, permission },
+      }),
+    }),
+
     // get folder info (e.g. title, parents) but *not* children
     getFolder: builder.query<FolderDTO, string>({
       providesTags: (_result, _error, folderUID) => [{ type: 'getFolder', id: folderUID }],
       query: (folderUID) => ({ url: `/folders/${folderUID}`, params: { accesscontrol: true } }),
     }),
+
     // create a new folder
     newFolder: builder.mutation<FolderDTO, { title: string; parentUid?: string }>({
       query: ({ title, parentUid }) => ({
@@ -81,6 +122,7 @@ export const browseDashboardsAPI = createApi({
         });
       },
     }),
+
     // save an existing folder (e.g. rename)
     saveFolder: builder.mutation<FolderDTO, FolderDTO>({
       // because the getFolder calls contain the parents, renaming a parent/grandparent/etc needs to invalidate all child folders
@@ -203,7 +245,7 @@ export const browseDashboardsAPI = createApi({
         // Move all the dashboards sequentially
         // TODO error handling here
         for (const dashboardUID of selectedDashboards) {
-          const fullDash: DashboardDTO = await getBackendSrv().get(`/api/dashboards/uid/${dashboardUID}`);
+          const fullDash: DashboardDTO = await getDashboardAPI().getDashboardDTO(dashboardUID);
 
           const options = {
             dashboard: fullDash.dashboard,
@@ -273,9 +315,10 @@ export const browseDashboardsAPI = createApi({
     }),
     // save an existing dashboard
     saveDashboard: builder.mutation<SaveDashboardResponseDTO, SaveDashboardCommand>({
-      query: ({ dashboard, folderUid, message, overwrite }) => ({
+      query: ({ dashboard, folderUid, message, overwrite, showErrorAlert }) => ({
         url: `/dashboards/db`,
         method: 'POST',
+        showErrorAlert,
         data: {
           dashboard,
           folderUid,
@@ -296,6 +339,30 @@ export const browseDashboardsAPI = createApi({
         });
       },
     }),
+    importDashboard: builder.mutation<ImportDashboardResponseDTO, ImportOptions>({
+      query: ({ dashboard, overwrite, inputs, folderUid }) => ({
+        method: 'POST',
+        url: '/dashboards/import',
+        data: {
+          dashboard,
+          overwrite,
+          inputs,
+          folderUid,
+        },
+      }),
+      onQueryStarted: ({ folderUid }, { queryFulfilled, dispatch }) => {
+        queryFulfilled.then(async (response) => {
+          dispatch(
+            refetchChildren({
+              parentUID: folderUid,
+              pageSize: PAGE_SIZE,
+            })
+          );
+          const dashboardUrl = locationUtil.stripBaseFromUrl(response.data.importedUrl);
+          locationService.push(dashboardUrl);
+        });
+      },
+    }),
   }),
 });
 
@@ -311,4 +378,5 @@ export const {
   useSaveDashboardMutation,
   useSaveFolderMutation,
 } = browseDashboardsAPI;
+
 export { skipToken } from '@reduxjs/toolkit/query/react';

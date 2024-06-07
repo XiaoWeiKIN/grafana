@@ -2,7 +2,7 @@ import { useObservable } from 'react-use';
 import { BehaviorSubject } from 'rxjs';
 
 import { AppEvents, NavModel, NavModelItem, PageLayoutType, UrlQueryValue } from '@grafana/data';
-import { locationService, reportInteraction } from '@grafana/runtime';
+import { config, locationService, reportInteraction } from '@grafana/runtime';
 import appEvents from 'app/core/app_events';
 import { t } from 'app/core/internationalization';
 import store from 'app/core/store';
@@ -11,28 +11,49 @@ import { KioskMode } from 'app/types';
 
 import { RouteDescriptor } from '../../navigation/types';
 
+import { ReturnToPreviousProps } from './ReturnToPrevious/ReturnToPrevious';
+
 export interface AppChromeState {
   chromeless?: boolean;
   sectionNav: NavModel;
   pageNav?: NavModelItem;
   actions?: React.ReactNode;
   searchBarHidden?: boolean;
-  megaMenuOpen?: boolean;
+  megaMenuOpen: boolean;
+  megaMenuDocked: boolean;
   kioskMode: KioskMode | null;
   layout: PageLayoutType;
+  returnToPrevious?: {
+    title: ReturnToPreviousProps['title'];
+    href: ReturnToPreviousProps['href'];
+  };
 }
+
+export const DOCKED_LOCAL_STORAGE_KEY = 'grafana.navigation.docked';
+export const DOCKED_MENU_OPEN_LOCAL_STORAGE_KEY = 'grafana.navigation.open';
 
 export class AppChromeService {
   searchBarStorageKey = 'SearchBar_Hidden';
   private currentRoute?: RouteDescriptor;
   private routeChangeHandled = true;
 
+  private megaMenuDocked = Boolean(
+    window.innerWidth >= config.theme2.breakpoints.values.xl &&
+      store.getBool(DOCKED_LOCAL_STORAGE_KEY, Boolean(window.innerWidth >= config.theme2.breakpoints.values.xxl))
+  );
+
+  private sessionStorageData = window.sessionStorage.getItem('returnToPrevious');
+  private returnToPreviousData = this.sessionStorageData ? JSON.parse(this.sessionStorageData) : undefined;
+
   readonly state = new BehaviorSubject<AppChromeState>({
     chromeless: true, // start out hidden to not flash it on pages without chrome
     sectionNav: { node: { text: t('nav.home.title', 'Home') }, main: { text: '' } },
     searchBarHidden: store.getBool(this.searchBarStorageKey, false),
+    megaMenuOpen: this.megaMenuDocked && store.getBool(DOCKED_MENU_OPEN_LOCAL_STORAGE_KEY, true),
+    megaMenuDocked: this.megaMenuDocked,
     kioskMode: null,
     layout: PageLayoutType.Canvas,
+    returnToPrevious: this.returnToPreviousData,
   });
 
   public setMatchedRoute(route: RouteDescriptor) {
@@ -68,6 +89,30 @@ export class AppChromeService {
     }
   }
 
+  public setReturnToPrevious = (returnToPrevious: ReturnToPreviousProps) => {
+    const previousPage = this.state.getValue().returnToPrevious;
+    reportInteraction('grafana_return_to_previous_button_created', {
+      page: returnToPrevious.href,
+      previousPage: previousPage?.href,
+    });
+
+    this.update({ returnToPrevious });
+    window.sessionStorage.setItem('returnToPrevious', JSON.stringify(returnToPrevious));
+  };
+
+  public clearReturnToPrevious = (interactionAction: 'clicked' | 'dismissed' | 'auto_dismissed') => {
+    const existingRtp = this.state.getValue().returnToPrevious;
+    if (existingRtp) {
+      reportInteraction('grafana_return_to_previous_button_dismissed', {
+        action: interactionAction,
+        page: existingRtp.href,
+      });
+    }
+
+    this.update({ returnToPrevious: undefined });
+    window.sessionStorage.removeItem('returnToPrevious');
+  };
+
   private ignoreStateUpdate(newState: AppChromeState, current: AppChromeState) {
     if (isShallowEqual(newState, current)) {
       return true;
@@ -93,14 +138,25 @@ export class AppChromeService {
     return useObservable(this.state, this.state.getValue());
   }
 
-  public onToggleMegaMenu = () => {
-    const isOpen = !this.state.getValue().megaMenuOpen;
-    reportInteraction('grafana_toggle_menu_clicked', { action: isOpen ? 'open' : 'close' });
-    this.update({ megaMenuOpen: isOpen });
+  public setMegaMenuOpen = (newOpenState: boolean) => {
+    const { megaMenuDocked } = this.state.getValue();
+    if (megaMenuDocked) {
+      store.set(DOCKED_MENU_OPEN_LOCAL_STORAGE_KEY, newOpenState);
+    }
+    reportInteraction('grafana_mega_menu_open', { state: newOpenState });
+    this.update({
+      megaMenuOpen: newOpenState,
+    });
   };
 
-  public setMegaMenu = (megaMenuOpen: boolean) => {
-    this.update({ megaMenuOpen });
+  public setMegaMenuDocked = (newDockedState: boolean, updatePersistedState = true) => {
+    if (updatePersistedState) {
+      store.set(DOCKED_LOCAL_STORAGE_KEY, newDockedState);
+    }
+    reportInteraction('grafana_mega_menu_docked', { state: newDockedState });
+    this.update({
+      megaMenuDocked: newDockedState,
+    });
   };
 
   public onToggleSearchBar = () => {
@@ -127,13 +183,19 @@ export class AppChromeService {
   }
 
   public setKioskModeFromUrl(kiosk: UrlQueryValue) {
+    let newKioskMode: KioskMode | undefined;
+
     switch (kiosk) {
       case 'tv':
-        this.update({ kioskMode: KioskMode.TV });
+        newKioskMode = KioskMode.TV;
         break;
       case '1':
       case true:
-        this.update({ kioskMode: KioskMode.Full });
+        newKioskMode = KioskMode.Full;
+    }
+
+    if (newKioskMode && newKioskMode !== this.state.getValue().kioskMode) {
+      this.update({ kioskMode: newKioskMode });
     }
   }
 

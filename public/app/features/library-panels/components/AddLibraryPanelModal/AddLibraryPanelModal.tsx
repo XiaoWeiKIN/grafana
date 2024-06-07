@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useAsync, useDebounce } from 'react-use';
 
-import { isFetchError } from '@grafana/runtime';
+import { FetchError, isFetchError } from '@grafana/runtime';
+import { LibraryPanel } from '@grafana/schema/dist/esm/index.gen';
 import { Button, Field, Input, Modal } from '@grafana/ui';
 import { OldFolderPicker } from 'app/core/components/Select/OldFolderPicker';
 import { t, Trans } from 'app/core/internationalization';
@@ -11,12 +12,18 @@ import { getLibraryPanelByName } from '../../state/api';
 import { usePanelSave } from '../../utils/usePanelSave';
 
 interface AddLibraryPanelContentsProps {
-  onDismiss: () => void;
+  onDismiss?: () => void;
   panel: PanelModel;
   initialFolderUid?: string;
+  onCreateLibraryPanel?: (libPanel: LibraryPanel) => void;
 }
 
-export const AddLibraryPanelContents = ({ panel, initialFolderUid, onDismiss }: AddLibraryPanelContentsProps) => {
+export const AddLibraryPanelContents = ({
+  panel,
+  initialFolderUid,
+  onCreateLibraryPanel,
+  onDismiss,
+}: AddLibraryPanelContentsProps) => {
   const [folderUid, setFolderUid] = useState(initialFolderUid);
   const [panelName, setPanelName] = useState(panel.title);
   const [debouncedPanelName, setDebouncedPanelName] = useState(panel.title);
@@ -26,14 +33,19 @@ export const AddLibraryPanelContents = ({ panel, initialFolderUid, onDismiss }: 
   useDebounce(() => setDebouncedPanelName(panelName), 350, [panelName]);
 
   const { saveLibraryPanel } = usePanelSave();
+
   const onCreate = useCallback(() => {
     panel.libraryPanel = { uid: '', name: panelName };
-    saveLibraryPanel(panel, folderUid!).then((res) => {
-      if (!(res instanceof Error)) {
-        onDismiss();
+    saveLibraryPanel(panel, folderUid!).then((res: LibraryPanel | FetchError) => {
+      if (!isFetchError(res)) {
+        onDismiss?.();
+        onCreateLibraryPanel?.(res);
+      } else {
+        panel.libraryPanel = undefined;
       }
     });
-  }, [panel, panelName, folderUid, onDismiss, saveLibraryPanel]);
+  }, [panel, panelName, saveLibraryPanel, folderUid, onDismiss, onCreateLibraryPanel]);
+
   const isValidName = useAsync(async () => {
     try {
       return !(await getLibraryPanelByName(panelName)).some((lp) => lp.folderUid === folderUid);
@@ -47,6 +59,7 @@ export const AddLibraryPanelContents = ({ panel, initialFolderUid, onDismiss }: 
     }
   }, [debouncedPanelName, folderUid]);
 
+  console.log('isValidName:', isValidName);
   const invalidInput =
     !isValidName?.value && isValidName.value !== undefined && panelName === debouncedPanelName && !waiting;
 

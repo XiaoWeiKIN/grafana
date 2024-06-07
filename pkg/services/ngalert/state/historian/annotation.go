@@ -41,8 +41,7 @@ type AnnotationStore interface {
 	Save(ctx context.Context, panel *PanelKey, annotations []annotations.Item, orgID int64, logger log.Logger) error
 }
 
-func NewAnnotationBackend(annotations AnnotationStore, rules RuleStore, metrics *metrics.Historian) *AnnotationBackend {
-	logger := log.New("ngalert.state.historian", "backend", "annotations")
+func NewAnnotationBackend(logger log.Logger, annotations AnnotationStore, rules RuleStore, metrics *metrics.Historian) *AnnotationBackend {
 	return &AnnotationBackend{
 		store:   annotations,
 		rules:   rules,
@@ -111,8 +110,8 @@ func (h *AnnotationBackend) Query(ctx context.Context, query ngmodels.HistoryQue
 	q := annotations.ItemQuery{
 		AlertID:      rule.ID,
 		OrgID:        query.OrgID,
-		From:         query.From.Unix(),
-		To:           query.To.Unix(),
+		From:         query.From.UnixMilli(),
+		To:           query.To.UnixMilli(),
 		SignedInUser: query.SignedInUser,
 	}
 	items, err := h.store.Find(ctx, &q)
@@ -173,12 +172,12 @@ func (h *AnnotationBackend) Query(ctx context.Context, query ngmodels.HistoryQue
 func buildAnnotations(rule history_model.RuleMeta, states []state.StateTransition, logger log.Logger) []annotations.Item {
 	items := make([]annotations.Item, 0, len(states))
 	for _, state := range states {
-		if !shouldRecord(state) {
+		if !ShouldRecordAnnotation(state) {
 			continue
 		}
 		logger.Debug("Alert state changed creating annotation", "newState", state.Formatted(), "oldState", state.PreviousFormatted())
 
-		annotationText, annotationData := buildAnnotationTextAndData(rule, state.State)
+		annotationText, annotationData := BuildAnnotationTextAndData(rule, state.State)
 
 		item := annotations.Item{
 			AlertID:   rule.ID,
@@ -195,7 +194,7 @@ func buildAnnotations(rule history_model.RuleMeta, states []state.StateTransitio
 	return items
 }
 
-func buildAnnotationTextAndData(rule history_model.RuleMeta, currentState *state.State) (string, *simplejson.Json) {
+func BuildAnnotationTextAndData(rule history_model.RuleMeta, currentState *state.State) (string, *simplejson.Json) {
 	jsonData := simplejson.New()
 	var value string
 

@@ -15,23 +15,38 @@ import { EdgeDatum, GraphFrame, NodeDatum, NodeDatumFromEdge, NodeGraphOptions }
 type Line = { x1: number; y1: number; x2: number; y2: number };
 
 /**
- * Makes line shorter while keeping the middle in he same place.
+ * Makes line shorter while keeping its middle in the same place.
+ * This is manly used to add some empty space between an edge line and its source and target nodes, to make it nicer.
+ *
+ * @param line a line, where x1 and y1 are the coordinates of the source node center, and x2 and y2 are the coordinates of the target node center
+ * @param sourceNodeRadius radius of the source node (possibly taking into account the thickness of the node circumference line, etc.)
+ * @param targetNodeRadius radius of the target node (possibly taking into account the thickness of the node circumference line, etc.)
+ * @param arrowHeadHeight height of the arrow head (in pixels)
  */
-export function shortenLine(line: Line, sourceNodeRadius: number, targetNodeRadius: number): Line {
+export function shortenLine(line: Line, sourceNodeRadius: number, targetNodeRadius: number, arrowHeadHeight = 1): Line {
   const vx = line.x2 - line.x1;
   const vy = line.y2 - line.y1;
   const mag = Math.sqrt(vx * vx + vy * vy);
   const cosine = (line.x2 - line.x1) / mag;
   const sine = (line.y2 - line.y1) / mag;
+  const scaledThickness = arrowHeadHeight - arrowHeadHeight / 10;
+
+  // Reduce the line length (along its main direction) by:
+  // - the radius of the source node
+  // - the radius of the target node,
+  // - a constant value, just to add some empty space
+  // - the height of the arrow head; the bigger the arrow head, the better is to add even more empty space
   return {
     x1: line.x1 + cosine * (sourceNodeRadius + 5),
     y1: line.y1 + sine * (sourceNodeRadius + 5),
-    x2: line.x2 - cosine * (targetNodeRadius + 5),
-    y2: line.y2 - sine * (targetNodeRadius + 5),
+    x2: line.x2 - cosine * (targetNodeRadius + 3 + scaledThickness),
+    y2: line.y2 - sine * (targetNodeRadius + 3 + scaledThickness),
   };
 }
 
 export type NodeFields = {
+  fixedX?: Field;
+  fixedY?: Field;
   id?: Field;
   title?: Field;
   subTitle?: Field;
@@ -42,6 +57,7 @@ export type NodeFields = {
   color?: Field;
   icon?: Field;
   nodeRadius?: Field;
+  highlighted?: Field;
 };
 
 export function getNodeFields(nodes: DataFrame): NodeFields {
@@ -61,6 +77,9 @@ export function getNodeFields(nodes: DataFrame): NodeFields {
     color: fieldsCache.getFieldByName(NodeGraphDataFrameFieldNames.color),
     icon: fieldsCache.getFieldByName(NodeGraphDataFrameFieldNames.icon),
     nodeRadius: fieldsCache.getFieldByName(NodeGraphDataFrameFieldNames.nodeRadius.toLowerCase()),
+    highlighted: fieldsCache.getFieldByName(NodeGraphDataFrameFieldNames.highlighted.toLowerCase()),
+    fixedX: fieldsCache.getFieldByName(NodeGraphDataFrameFieldNames.fixedX.toLowerCase()),
+    fixedY: fieldsCache.getFieldByName(NodeGraphDataFrameFieldNames.fixedY.toLowerCase()),
   };
 }
 
@@ -71,6 +90,13 @@ export type EdgeFields = {
   mainStat?: Field;
   secondaryStat?: Field;
   details: Field[];
+  /**
+   * @deprecated use `color` instead
+   */
+  highlighted?: Field;
+  thickness?: Field;
+  color?: Field;
+  strokeDasharray?: Field;
 };
 
 export function getEdgeFields(edges: DataFrame): EdgeFields {
@@ -86,6 +112,11 @@ export function getEdgeFields(edges: DataFrame): EdgeFields {
     mainStat: fieldsCache.getFieldByName(NodeGraphDataFrameFieldNames.mainStat.toLowerCase()),
     secondaryStat: fieldsCache.getFieldByName(NodeGraphDataFrameFieldNames.secondaryStat.toLowerCase()),
     details: findFieldsByPrefix(edges, NodeGraphDataFrameFieldNames.detail.toLowerCase()),
+    // @deprecated -- for edges use color instead
+    highlighted: fieldsCache.getFieldByName(NodeGraphDataFrameFieldNames.highlighted.toLowerCase()),
+    thickness: fieldsCache.getFieldByName(NodeGraphDataFrameFieldNames.thickness.toLowerCase()),
+    color: fieldsCache.getFieldByName(NodeGraphDataFrameFieldNames.color.toLowerCase()),
+    strokeDasharray: fieldsCache.getFieldByName(NodeGraphDataFrameFieldNames.strokeDasharray.toLowerCase()),
   };
 }
 
@@ -102,6 +133,7 @@ export function processNodes(
 ): {
   nodes: NodeDatum[];
   edges: EdgeDatum[];
+  hasFixedPositions?: boolean;
   legend?: Array<{
     color: string;
     name: string;
@@ -115,6 +147,24 @@ export function processNodes(
     const nodeFields = getNodeFields(nodes);
     if (!nodeFields.id) {
       throw new Error('id field is required for nodes data frame.');
+    }
+
+    const hasFixedPositions =
+      nodeFields.fixedX &&
+      nodeFields.fixedX.values.every((v) => Number.isFinite(v)) &&
+      nodeFields.fixedY &&
+      nodeFields.fixedY.values.every((v) => Number.isFinite(v));
+
+    // Throw an error if somebody is using fixedX and fixedY fields incorrectly. Other option is to ignore this but we
+    // are not able to easily combine fixed and non-fixed position in layout so that behaviour would be undefined
+    // and silent.
+    if (!hasFixedPositions) {
+      const somePosFilled =
+        (nodeFields.fixedX && nodeFields.fixedX.values.some((v) => Number.isFinite(v))) ||
+        (nodeFields.fixedY && nodeFields.fixedY.values.some((v) => Number.isFinite(v)));
+      if (somePosFilled) {
+        throw new Error('If fixedX and fixedY fields are present, the values have to be all filled and valid');
+      }
     }
 
     // Create the nodes here
@@ -135,6 +185,7 @@ export function processNodes(
     return {
       nodes: Object.values(nodesMap),
       edges: edgeDatums,
+      hasFixedPositions,
       legend: nodeFields.arc.map((f) => {
         return {
           color: f.config.color?.fixedColor ?? '',
@@ -183,6 +234,8 @@ export function processNodes(
     return {
       nodes,
       edges: edgeDatums,
+      // Edge-only datasets never have fixedX/fixedY
+      hasFixedPositions: false,
     };
   }
 }
@@ -215,6 +268,11 @@ function processEdges(edges: DataFrame, edgeFields: EdgeFields, nodesMap: { [id:
       secondaryStat: edgeFields.secondaryStat
         ? statToString(edgeFields.secondaryStat.config, edgeFields.secondaryStat.values[index])
         : '',
+      // @deprecated -- for edges use color instead
+      highlighted: edgeFields.highlighted?.values[index] || false,
+      thickness: edgeFields.thickness?.values[index] || 1,
+      color: edgeFields.color?.values[index],
+      strokeDasharray: edgeFields.strokeDasharray?.values[index],
     };
   });
 }
@@ -230,8 +288,8 @@ function computableField(field?: Field) {
  * @param edgeFields
  */
 function normalizeStatsForNodes(nodesMap: { [id: string]: NodeDatumFromEdge }, edgeFields: EdgeFields): NodeDatum[] {
-  const secondaryStatValues: any[] = [];
-  const mainStatValues: any[] = [];
+  const secondaryStatValues: Array<number | undefined> = [];
+  const mainStatValues: Array<number | undefined> = [];
   const secondaryStatField = computableField(edgeFields.secondaryStat)
     ? {
         ...edgeFields.secondaryStat!,
@@ -286,6 +344,7 @@ function makeSimpleNodeDatum(name: string, index: number): NodeDatumFromEdge {
     dataFrameRowIndex: index,
     incoming: 0,
     arcSections: [],
+    highlighted: false,
   };
 }
 
@@ -302,6 +361,9 @@ function makeNodeDatum(id: string, nodeFields: NodeFields, index: number): NodeD
     color: nodeFields.color,
     icon: nodeFields.icon?.values[index] || '',
     nodeRadius: nodeFields.nodeRadius,
+    highlighted: nodeFields.highlighted?.values[index] || false,
+    x: nodeFields.fixedX?.values[index] ?? undefined,
+    y: nodeFields.fixedY?.values[index] ?? undefined,
   };
 }
 
@@ -347,7 +409,7 @@ function makeNode(index: number) {
 }
 
 function nodesFrame() {
-  const fields: any = {
+  const fields = {
     [NodeGraphDataFrameFieldNames.id]: {
       values: [],
       type: FieldType.string,
@@ -371,17 +433,17 @@ function nodesFrame() {
     [NodeGraphDataFrameFieldNames.arc + 'success']: {
       values: [],
       type: FieldType.number,
-      config: { color: { fixedColor: 'green' } },
+      config: { color: { mode: FieldColorModeId.Fixed, fixedColor: 'green' } },
     },
     [NodeGraphDataFrameFieldNames.arc + 'errors']: {
       values: [],
       type: FieldType.number,
-      config: { color: { fixedColor: 'red' } },
+      config: { color: { mode: FieldColorModeId.Fixed, fixedColor: 'red' } },
     },
     [NodeGraphDataFrameFieldNames.color]: {
       values: [],
       type: FieldType.number,
-      config: { color: { mode: 'continuous-GrYlRd' } },
+      config: { color: { mode: FieldColorModeId.ContinuousGrYlRd } },
     },
     [NodeGraphDataFrameFieldNames.icon]: {
       values: [],
@@ -395,8 +457,8 @@ function nodesFrame() {
 
   return new MutableDataFrame({
     name: 'nodes',
-    fields: Object.keys(fields).map((key) => ({
-      ...fields[key],
+    fields: Object.entries(fields).map(([key, value]) => ({
+      ...value,
       name: key,
     })),
   });
@@ -417,7 +479,7 @@ export function makeEdgesDataFrame(
 }
 
 function edgesFrame() {
-  const fields: any = {
+  const fields = {
     [NodeGraphDataFrameFieldNames.id]: {
       values: [],
       type: FieldType.string,
@@ -442,8 +504,8 @@ function edgesFrame() {
 
   return new MutableDataFrame({
     name: 'edges',
-    fields: Object.keys(fields).map((key) => ({
-      ...fields[key],
+    fields: Object.entries(fields).map(([key, value]) => ({
+      ...value,
       name: key,
     })),
   });
@@ -565,7 +627,8 @@ export const applyOptionsToFrames = (frames: DataFrame[], options: NodeGraphOpti
       }
       if (options?.nodes?.arcs?.length) {
         for (const arc of options.nodes.arcs) {
-          const field = frame.fields.find((field) => field.name.toLowerCase() === arc.field);
+          // As the arc__ field suffixes can be custom we compare them case insensitively to be safe.
+          const field = frame.fields.find((field) => field.name.toLowerCase() === arc.field?.toLowerCase());
           if (field && arc.color) {
             field.config = { ...field.config, color: { fixedColor: arc.color, mode: FieldColorModeId.Fixed } };
           }
@@ -607,7 +670,7 @@ export const getGraphFrame = (frames: DataFrame[]) => {
   return frames.reduce<GraphFrame>(
     (acc, frame) => {
       const sourceField = frame.fields.filter((f) => f.name === 'source');
-      if (sourceField.length) {
+      if (frame.name === 'edges' || sourceField.length) {
         acc.edges.push(frame);
       } else {
         acc.nodes.push(frame);

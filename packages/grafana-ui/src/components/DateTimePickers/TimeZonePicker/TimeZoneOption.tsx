@@ -3,9 +3,9 @@ import { isString } from 'lodash';
 import React, { PropsWithChildren, RefCallback } from 'react';
 
 import { GrafanaTheme2, SelectableValue, getTimeZoneInfo } from '@grafana/data';
+import { selectors } from '@grafana/e2e-selectors';
 
-import { useTheme2 } from '../../../themes/ThemeContext';
-import { stylesFactory } from '../../../themes/stylesFactory';
+import { useStyles2 } from '../../../themes';
 import { Icon } from '../../Icon/Icon';
 
 import { TimeZoneDescription } from './TimeZoneDescription';
@@ -28,8 +28,7 @@ export interface SelectableZone extends SelectableValue<string> {
 
 export const WideTimeZoneOption = (props: PropsWithChildren<Props>) => {
   const { children, innerProps, innerRef, data, isSelected, isFocused } = props;
-  const theme = useTheme2();
-  const styles = getStyles(theme);
+  const styles = useStyles2(getStyles);
   const timestamp = Date.now();
   const containerStyles = cx(styles.container, isFocused && styles.containerFocused);
 
@@ -40,7 +39,7 @@ export const WideTimeZoneOption = (props: PropsWithChildren<Props>) => {
   const timeZoneInfo = getTimeZoneInfo(data.value, timestamp);
 
   return (
-    <div className={containerStyles} {...innerProps} ref={innerRef} aria-label="Select option">
+    <div className={containerStyles} {...innerProps} ref={innerRef} data-testid={selectors.components.Select.option}>
       <div className={cx(styles.leftColumn, styles.row)}>
         <div className={cx(styles.leftColumn, styles.wideRow)}>
           <TimeZoneTitle title={children} />
@@ -68,8 +67,7 @@ export const WideTimeZoneOption = (props: PropsWithChildren<Props>) => {
 
 export const CompactTimeZoneOption = (props: React.PropsWithChildren<Props>) => {
   const { children, innerProps, innerRef, data, isSelected, isFocused } = props;
-  const theme = useTheme2();
-  const styles = getStyles(theme);
+  const styles = useStyles2(getStyles);
   const timestamp = Date.now();
   const containerStyles = cx(styles.container, isFocused && styles.containerFocused);
 
@@ -80,7 +78,7 @@ export const CompactTimeZoneOption = (props: React.PropsWithChildren<Props>) => 
   const timeZoneInfo = getTimeZoneInfo(data.value, timestamp);
 
   return (
-    <div className={containerStyles} {...innerProps} ref={innerRef} aria-label="Select option">
+    <div className={containerStyles} {...innerProps} ref={innerRef} data-testid={selectors.components.Select.option}>
       <div className={styles.body}>
         <div className={styles.row}>
           <div className={styles.leftColumn}>
@@ -113,49 +111,47 @@ export const CompactTimeZoneOption = (props: React.PropsWithChildren<Props>) => 
   );
 };
 
-const getStyles = stylesFactory((theme: GrafanaTheme2) => {
-  return {
-    container: css({
-      display: 'flex',
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexShrink: 0,
-      whiteSpace: 'nowrap',
-      cursor: 'pointer',
-      padding: '6px 8px 4px',
+const getStyles = (theme: GrafanaTheme2) => ({
+  container: css({
+    display: 'flex',
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexShrink: 0,
+    whiteSpace: 'nowrap',
+    cursor: 'pointer',
+    padding: '6px 8px 4px',
 
-      '&:hover': {
-        background: theme.colors.action.hover,
-      },
-    }),
-    containerFocused: css({
+    '&:hover': {
       background: theme.colors.action.hover,
-    }),
-    body: css({
-      display: 'flex',
-      fontWeight: theme.typography.fontWeightMedium,
-      flexDirection: 'column',
-      flexGrow: 1,
-    }),
-    row: css({
-      display: 'flex',
-      flexDirection: 'row',
-    }),
-    leftColumn: css({
-      flexGrow: 1,
-      textOverflow: 'ellipsis',
-    }),
-    rightColumn: css({
-      justifyContent: 'flex-end',
-      alignItems: 'center',
-    }),
-    wideRow: css({
-      display: 'flex',
-      flexDirection: 'row',
-      alignItems: 'baseline',
-    }),
-    spacer: css({
-      marginLeft: '6px',
-    }),
-  };
+    },
+  }),
+  containerFocused: css({
+    background: theme.colors.action.hover,
+  }),
+  body: css({
+    display: 'flex',
+    fontWeight: theme.typography.fontWeightMedium,
+    flexDirection: 'column',
+    flexGrow: 1,
+  }),
+  row: css({
+    display: 'flex',
+    flexDirection: 'row',
+  }),
+  leftColumn: css({
+    flexGrow: 1,
+    textOverflow: 'ellipsis',
+  }),
+  rightColumn: css({
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  }),
+  wideRow: css({
+    display: 'flex',
+    flexDirection: 'row',
+    alignItems: 'baseline',
+  }),
+  spacer: css({
+    marginLeft: '6px',
+  }),
 });

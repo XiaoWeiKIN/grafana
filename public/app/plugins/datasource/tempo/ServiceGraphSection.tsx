@@ -5,10 +5,9 @@ import useAsync from 'react-use/lib/useAsync';
 import { GrafanaTheme2 } from '@grafana/data';
 import { Alert, InlineField, InlineFieldRow, useStyles2 } from '@grafana/ui';
 
-import { AdHocFilter } from '../../../features/variables/adhoc/picker/AdHocFilter';
-import { AdHocVariableFilter } from '../../../features/variables/types';
-import { PrometheusDatasource } from '../prometheus/datasource';
-
+import { AdHocFilter } from './_importedDependencies/components/AdHocFilter/AdHocFilter';
+import { AdHocVariableFilter } from './_importedDependencies/components/AdHocFilter/types';
+import { PrometheusDatasource } from './_importedDependencies/datasources/prometheus/types';
 import { TempoQuery } from './types';
 import { getDS } from './utils';
 
@@ -50,22 +49,27 @@ export function ServiceGraphSection({
     return null;
   }
 
-  const ds = dsState.value as PrometheusDatasource;
+  const ds = dsState.value;
 
   if (!graphDatasourceUid) {
-    return <div className="text-warning">Please set up a service graph datasource in the datasource settings.</div>;
-  }
-
-  if (graphDatasourceUid && !ds) {
-    return (
-      <div className="text-warning">
-        Service graph datasource is configured but the data source no longer exists. Please configure existing data
-        source to use the service graph functionality.
-      </div>
+    return getWarning(
+      'No service graph datasource selected',
+      'Please set up a service graph datasource in the datasource settings',
+      styles
     );
   }
 
-  const filters = queryToFilter(query.serviceMapQuery || '');
+  if (graphDatasourceUid && !ds) {
+    return getWarning(
+      'No service graph data found',
+      'Service graph datasource is configured but the data source no longer exists. Please configure existing data source to use the service graph functionality',
+      styles
+    );
+  }
+
+  const filters = queryToFilter(
+    (Array.isArray(query.serviceMapQuery) ? query.serviceMapQuery[0] : query.serviceMapQuery) || ''
+  );
 
   return (
     <div>
@@ -101,21 +105,31 @@ export function ServiceGraphSection({
           />
         </InlineField>
       </InlineFieldRow>
-      {hasKeys === false ? (
-        <Alert title="No service graph data found" severity="info" className={styles.alert}>
-          Please ensure that service graph metrics are set up correctly according to the{' '}
-          <a
-            target="_blank"
-            rel="noreferrer noopener"
-            href="https://grafana.com/docs/grafana/latest/datasources/tempo/#service-graph"
-            className={styles.link}
-          >
-            Tempo documentation
-          </a>
-          .
-        </Alert>
-      ) : null}
+      {hasKeys === false
+        ? getWarning(
+            'No service graph data found',
+            'Please ensure that service graph metrics are set up correctly',
+            styles
+          )
+        : null}
     </div>
+  );
+}
+
+function getWarning(title: string, description: string, styles: { alert: string; link: string }) {
+  return (
+    <Alert title={title} severity="info" className={styles.alert}>
+      {description} according to the{' '}
+      <a
+        target="_blank"
+        rel="noreferrer noopener"
+        href="https://grafana.com/docs/grafana/latest/datasources/tempo/service-graph/"
+        className={styles.link}
+      >
+        Tempo documentation
+      </a>
+      .
+    </Alert>
   );
 }
 
@@ -139,12 +153,12 @@ function filtersToQuery(filters: AdHocVariableFilter[]): string {
 }
 
 const getStyles = (theme: GrafanaTheme2) => ({
-  alert: css`
-    max-width: 75ch;
-    margin-top: ${theme.spacing(2)};
-  `,
-  link: css`
-    color: ${theme.colors.text.link};
-    text-decoration: underline;
-  `,
+  alert: css({
+    maxWidth: '75ch',
+    marginTop: theme.spacing(2),
+  }),
+  link: css({
+    color: theme.colors.text.link,
+    textDecoration: 'underline',
+  }),
 });

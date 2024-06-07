@@ -15,6 +15,7 @@ export const AutoRefreshInterval = 'auto';
 export class User implements Omit<CurrentUserInternal, 'lightTheme'> {
   isSignedIn: boolean;
   id: number;
+  uid: string;
   login: string;
   email: string;
   name: string;
@@ -39,6 +40,7 @@ export class User implements Omit<CurrentUserInternal, 'lightTheme'> {
 
   constructor() {
     this.id = 0;
+    this.uid = '';
     this.isGrafanaAdmin = false;
     this.isSignedIn = false;
     this.orgRole = '';
@@ -97,11 +99,9 @@ export class ContextSrv {
 
   async fetchUserPermissions() {
     try {
-      if (this.accessControlEnabled()) {
-        this.user.permissions = await getBackendSrv().get('/api/access-control/user/actions', {
-          reloadcache: true,
-        });
-      }
+      this.user.permissions = await getBackendSrv().get('/api/access-control/user/actions', {
+        reloadcache: true,
+      });
     } catch (e) {
       console.error(e);
     }
@@ -125,31 +125,17 @@ export class ContextSrv {
     }
   }
 
-  accessControlEnabled(): boolean {
-    return config.rbacEnabled;
-  }
-
   licensedAccessControlEnabled(): boolean {
-    return featureEnabled('accesscontrol') && config.rbacEnabled;
+    return featureEnabled('accesscontrol');
   }
 
   // Checks whether user has required permission
   hasPermissionInMetadata(action: AccessControlAction | string, object: WithAccessControlMetadata): boolean {
-    // Fallback if access control disabled
-    if (!this.accessControlEnabled()) {
-      return true;
-    }
-
     return !!object.accessControl?.[action];
   }
 
   // Checks whether user has required permission
   hasPermission(action: AccessControlAction | string): boolean {
-    // Fallback if access control disabled
-    if (!this.accessControlEnabled()) {
-      return true;
-    }
-
     return !!this.user.permissions?.[action];
   }
 
@@ -180,24 +166,7 @@ export class ContextSrv {
   }
 
   hasAccessToExplore() {
-    if (this.accessControlEnabled()) {
-      return this.hasPermission(AccessControlAction.DataSourcesExplore) && config.exploreEnabled;
-    }
-    return (this.isEditor || config.viewersCanEdit) && config.exploreEnabled;
-  }
-
-  hasAccess(action: string, fallBack: boolean): boolean {
-    if (!this.accessControlEnabled()) {
-      return fallBack;
-    }
-    return this.hasPermission(action);
-  }
-
-  hasAccessInMetadata(action: string, object: WithAccessControlMetadata, fallBack: boolean): boolean {
-    if (!this.accessControlEnabled()) {
-      return fallBack;
-    }
-    return this.hasPermissionInMetadata(action, object);
+    return this.hasPermission(AccessControlAction.DataSourcesExplore) && config.exploreEnabled;
   }
 
   // evaluates access control permissions, granting access if the user has any of them
@@ -242,11 +211,6 @@ export class ContextSrv {
       return false;
     }
 
-    // skip if feature toggle is not enabled
-    if (!config.featureToggles.clientTokenRotation) {
-      return false;
-    }
-
     // skip if there is no session to rotate
     // if a user has a session but not yet a session expiry cookie, can happen during upgrade
     // from an older version of grafana, we never schedule the job and the fallback logic
@@ -260,7 +224,7 @@ export class ContextSrv {
   }
 
   private cancelTokenRotationJob() {
-    if (config.featureToggles.clientTokenRotation && this.tokenRotationJobId > 0) {
+    if (this.tokenRotationJobId > 0) {
       clearTimeout(this.tokenRotationJobId);
     }
   }

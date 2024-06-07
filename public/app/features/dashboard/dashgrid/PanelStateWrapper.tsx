@@ -1,3 +1,4 @@
+import { debounce } from 'lodash';
 import React, { PureComponent } from 'react';
 import { Subscription } from 'rxjs';
 
@@ -16,6 +17,7 @@ import {
   PanelData,
   PanelPlugin,
   PanelPluginMeta,
+  SetPanelAttentionEvent,
   TimeRange,
   toDataFrameDTO,
   toUtc,
@@ -30,6 +32,8 @@ import {
   SeriesVisibilityChangeMode,
   AdHocFilterItem,
 } from '@grafana/ui';
+import appEvents from 'app/core/app_events';
+import config from 'app/core/config';
 import { profiler } from 'app/core/profiler';
 import { applyPanelTimeOverrides } from 'app/features/dashboard/utils/panel';
 import { getDatasourceSrv } from 'app/features/plugins/datasource_srv';
@@ -47,8 +51,10 @@ import { getPanelChromeProps } from '../utils/getPanelChromeProps';
 import { loadSnapshotData } from '../utils/loadSnapshotData';
 
 import { PanelHeaderMenuWrapper } from './PanelHeader/PanelHeaderMenuWrapper';
+import { PanelLoadTimeMonitor } from './PanelLoadTimeMonitor';
 import { seriesVisibilityConfigFactory } from './SeriesVisibilityConfigFactory';
 import { liveTimer } from './liveTimer';
+import { PanelOptionsLogger } from './panelOptionsLogger';
 
 const DEFAULT_PLUGIN_ERROR = 'Error in plugin';
 
@@ -62,7 +68,7 @@ export interface Props {
   isDraggable?: boolean;
   width: number;
   height: number;
-  onInstanceStateChange: (value: any) => void;
+  onInstanceStateChange: (value: unknown) => void;
   timezone?: string;
   hideMenu?: boolean;
 }
@@ -71,7 +77,6 @@ export interface State {
   isFirstLoad: boolean;
   renderCounter: number;
   errorMessage?: string;
-  refreshWhenInView: boolean;
   context: PanelContext;
   data: PanelData;
   liveTime?: TimeRange;
@@ -81,17 +86,18 @@ export class PanelStateWrapper extends PureComponent<Props, State> {
   private readonly timeSrv: TimeSrv = getTimeSrv();
   private subs = new Subscription();
   private eventFilter: EventFilterOptions = { onlyLocal: true };
+  private panelOptionsLogger: PanelOptionsLogger | undefined = undefined;
 
   constructor(props: Props) {
     super(props);
 
     // Can this eventBus be on PanelModel?  when we have more complex event filtering, that may be a better option
     const eventBus = props.dashboard.events.newScopedBus(`panel:${props.panel.id}`, this.eventFilter);
+    this.debouncedSetPanelAttention = debounce(this.setPanelAttention.bind(this), 100);
 
     this.state = {
       isFirstLoad: true,
       renderCounter: 0,
-      refreshWhenInView: false,
       context: {
         eventsScope: '__global_',
         eventBus,
@@ -112,12 +118,22 @@ export class PanelStateWrapper extends PureComponent<Props, State> {
       },
       data: this.getInitialPanelDataState(),
     };
+
+    if (config.featureToggles.panelMonitoring && this.getPanelContextApp() === CoreApp.PanelEditor) {
+      const panelInfo = {
+        panelId: String(props.panel.id),
+        panelType: props.panel.type,
+        panelTitle: props.panel.title,
+      };
+
+      this.panelOptionsLogger = new PanelOptionsLogger(props.panel.getOptions(), props.panel.fieldConfig, panelInfo);
+    }
   }
 
   // Due to a mutable panel model we get the sync settings via function that proactively reads from the model
   getSync = () => (this.props.isEditing ? DashboardCursorSync.Off : this.props.dashboard.graphTooltip);
 
-  onInstanceStateChange = (value: any) => {
+  onInstanceStateChange = (value: unknown) => {
     this.props.onInstanceStateChange(value);
 
     this.setState({
@@ -244,7 +260,7 @@ export class PanelStateWrapper extends PureComponent<Props, State> {
   }
 
   componentDidUpdate(prevProps: Props) {
-    const { isInView, width } = this.props;
+    const { isInView, width, panel } = this.props;
     const { context } = this.state;
 
     const app = this.getPanelContextApp();
@@ -262,7 +278,7 @@ export class PanelStateWrapper extends PureComponent<Props, State> {
     if (isInView !== prevProps.isInView) {
       if (isInView) {
         // Check if we need a delayed refresh
-        if (this.state.refreshWhenInView) {
+        if (panel.refreshWhenInView) {
           this.onRefresh();
         }
       }
@@ -328,8 +344,8 @@ export class PanelStateWrapper extends PureComponent<Props, State> {
   onRefresh = () => {
     const { dashboard, panel, isInView, width } = this.props;
 
-    if (!isInView) {
-      this.setState({ refreshWhenInView: true });
+    if (!dashboard.snapshot && !isInView) {
+      panel.refreshWhenInView = true;
       return;
     }
 
@@ -341,9 +357,7 @@ export class PanelStateWrapper extends PureComponent<Props, State> {
         return;
       }
 
-      if (this.state.refreshWhenInView) {
-        this.setState({ refreshWhenInView: false });
-      }
+      panel.refreshWhenInView = false;
       panel.runAllPanelQueries({
         dashboardUID: dashboard.uid,
         dashboardTimezone: dashboard.getTimezone(),
@@ -373,8 +387,17 @@ export class PanelStateWrapper extends PureComponent<Props, State> {
     this.props.panel.updateFieldConfig(config);
   };
 
+  logPanelChangesOnError() {
+    this.panelOptionsLogger!.logChanges(this.props.panel.getOptions(), this.props.panel.fieldConfig);
+  }
+
   onPanelError = (error: Error) => {
+    if (config.featureToggles.panelMonitoring && this.getPanelContextApp() === CoreApp.PanelEditor) {
+      this.logPanelChangesOnError();
+    }
+
     const errorMessage = error.message || DEFAULT_PLUGIN_ERROR;
+
     if (this.state.errorMessage !== errorMessage) {
       this.setState({ errorMessage });
     }
@@ -441,7 +464,12 @@ export class PanelStateWrapper extends PureComponent<Props, State> {
   };
 
   shouldSignalRenderingCompleted(loadingState: LoadingState, pluginMeta: PanelPluginMeta) {
-    return loadingState === LoadingState.Done || loadingState === LoadingState.Error || pluginMeta.skipDataQuery;
+    return (
+      loadingState === LoadingState.Done ||
+      loadingState === LoadingState.Streaming ||
+      loadingState === LoadingState.Error ||
+      pluginMeta.skipDataQuery
+    );
   }
 
   skipFirstRender(loadingState: LoadingState) {
@@ -512,16 +540,24 @@ export class PanelStateWrapper extends PureComponent<Props, State> {
             onChangeTimeRange={this.onChangeTimeRange}
             eventBus={dashboard.events}
           />
+          {config.featureToggles.panelMonitoring && this.state.errorMessage === undefined && (
+            <PanelLoadTimeMonitor panelType={plugin.meta.id} panelId={panel.id} panelTitle={panel.title} />
+          )}
         </PanelContextProvider>
       </>
     );
   }
 
+  setPanelAttention() {
+    appEvents.publish(new SetPanelAttentionEvent({ panelId: this.props.panel.id }));
+  }
+
+  debouncedSetPanelAttention() {}
+
   render() {
     const { dashboard, panel, width, height, plugin } = this.props;
     const { errorMessage, data } = this.state;
     const { transparent } = panel;
-
     const panelChromeProps = getPanelChromeProps({ ...this.props, data });
 
     // Shift the hover menu down if it's on the top row so it doesn't get clipped by topnav
@@ -552,6 +588,8 @@ export class PanelStateWrapper extends PureComponent<Props, State> {
         displayMode={transparent ? 'transparent' : 'default'}
         onCancelQuery={panelChromeProps.onCancelQuery}
         onOpenMenu={panelChromeProps.onOpenMenu}
+        onFocus={() => this.setPanelAttention()}
+        onMouseMove={() => this.debouncedSetPanelAttention()}
       >
         {(innerWidth, innerHeight) => (
           <>

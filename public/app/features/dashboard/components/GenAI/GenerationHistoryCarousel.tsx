@@ -35,18 +35,18 @@ export const GenerationHistoryCarousel = ({
 
   return (
     <>
-      <MinimalisticPagination
-        currentPage={index}
-        numberOfPages={historySize}
-        onNavigate={onNavigate}
-        hideWhenSinglePage={true}
-        className={styles.paginationWrapper}
-      />
       <div className={styles.contentWrapper}>
         <Text element="p" color="secondary">
           {getHistoryText()}
         </Text>
       </div>
+      <MinimalisticPagination
+        currentPage={index}
+        numberOfPages={historySize}
+        onNavigate={onNavigate}
+        hideWhenSinglePage={false}
+        className={styles.paginationWrapper}
+      />
     </>
   );
 };
@@ -62,6 +62,12 @@ const getStyles = (theme: GrafanaTheme2) => ({
     display: 'flex',
     flexBasis: '100%',
     flexGrow: 3,
-    marginTop: 20,
+    whiteSpace: 'pre-wrap',
+    maxHeight: 110,
+    overflowY: 'scroll',
+    backgroundColor: theme.colors.background.secondary,
+    border: `1px solid ${theme.colors.border.weak}`,
+    padding: theme.spacing(1),
+    minHeight: 60,
   }),
 });

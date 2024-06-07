@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/search/model"
 	"github.com/grafana/grafana/pkg/services/sqlstore/migrator"
 )
@@ -14,8 +15,9 @@ import (
 type Builder struct {
 	// List of FilterWhere/FilterGroupBy/FilterOrderBy/FilterLeftJoin
 	// to modify the query.
-	Filters []any
-	Dialect migrator.Dialect
+	Filters  []any
+	Dialect  migrator.Dialect
+	Features featuremgmt.FeatureToggles
 
 	params []any
 	sql    bytes.Buffer
@@ -35,9 +37,16 @@ func (b *Builder) ToSQL(limit, page int64) (string, []any) {
 		INNER JOIN dashboard ON ids.id = dashboard.id`)
 	b.sql.WriteString("\n")
 
-	b.sql.WriteString(
-		`LEFT OUTER JOIN dashboard AS folder ON folder.id = dashboard.folder_id
-		LEFT OUTER JOIN dashboard_tag ON dashboard.id = dashboard_tag.dashboard_id`)
+	if b.Features.IsEnabledGlobally(featuremgmt.FlagNestedFolders) {
+		// covered by UQE_folder_org_id_uid
+		b.sql.WriteString(
+			`LEFT OUTER JOIN folder ON folder.uid = dashboard.folder_uid AND folder.org_id = dashboard.org_id`)
+	} else {
+		b.sql.WriteString(`
+		LEFT OUTER JOIN dashboard AS folder ON folder.id = dashboard.folder_id`)
+	}
+	b.sql.WriteString(`
+	LEFT OUTER JOIN dashboard_tag ON dashboard.id = dashboard_tag.dashboard_id`)
 	b.sql.WriteString("\n")
 	b.sql.WriteString(orderQuery)
 
@@ -57,8 +66,17 @@ func (b *Builder) buildSelect() {
 			dashboard_tag.term,
 			dashboard.is_folder,
 			dashboard.folder_id,
+			dashboard.deleted,
 			folder.uid AS folder_uid,
-			folder.slug AS folder_slug,
+		`)
+	if b.Features.IsEnabledGlobally(featuremgmt.FlagNestedFolders) {
+		b.sql.WriteString(`
+			folder.title AS folder_slug,`)
+	} else {
+		b.sql.WriteString(`
+			folder.slug AS folder_slug,`)
+	}
+	b.sql.WriteString(`
 			folder.title AS folder_title `)
 
 	for _, f := range b.Filters {

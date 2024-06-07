@@ -3,7 +3,7 @@ aliases:
   - ./meta-monitoring/ # /docs/grafana/<GRAFANA_VERSION>/alerting/meta-monitoring/
   - ./set-up/meta-monitoring/ # /docs/grafana/<GRAFANA_VERSION>/alerting/set-up/meta-monitoring/
 canonical: https://grafana.com/docs/grafana/latest/alerting/monitor/
-description: Meta monitoring
+description: Monitor your alerting metrics to ensure you identify potential issues before they become critical.
 keywords:
   - grafana
   - alerting
@@ -14,7 +14,7 @@ labels:
     - oss
 menuTitle: Monitor
 title: Meta monitoring
-weight: 200
+weight: 140
 ---
 
 # Meta monitoring
@@ -29,9 +29,9 @@ Identify which metrics are critical to your monitoring system (i.e. Grafana) and
 
 You can use meta-monitoring metrics to understand the health of your alerting system in the following ways:
 
-1. [Optional] Create a dashboard in Grafana that uses this metric in a panel (just like you would for any other kind of metric).
-2. [Optional] Create an alert rule in Grafana that checks this metric regularly (just like you would do for any other kind of alert rule).
-3. [Optional] Use the Explore module in Grafana.
+1. Optional: Create a dashboard in Grafana that uses this metric in a panel (just like you would for any other kind of metric).
+2. Optional: Create an alert rule in Grafana that checks this metric regularly (just like you would do for any other kind of alert rule).
+3. Optional: Use the Explore module in Grafana.
 
 ## Metrics for Grafana-managed alerts
 

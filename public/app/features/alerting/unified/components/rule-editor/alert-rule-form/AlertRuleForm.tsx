@@ -1,33 +1,40 @@
 import { css } from '@emotion/css';
-import { omit } from 'lodash';
 import React, { useEffect, useMemo, useState } from 'react';
-import { DeepMap, FieldError, FormProvider, useForm, UseFormWatch } from 'react-hook-form';
+import { FormProvider, SubmitErrorHandler, UseFormWatch, useForm } from 'react-hook-form';
 import { Link, useParams } from 'react-router-dom';
 
 import { GrafanaTheme2 } from '@grafana/data';
-import { Stack } from '@grafana/experimental';
-import { config, logInfo } from '@grafana/runtime';
-import { Button, ConfirmModal, CustomScrollbar, HorizontalGroup, Spinner, useStyles2 } from '@grafana/ui';
+import { config } from '@grafana/runtime';
+import { Button, ConfirmModal, CustomScrollbar, Spinner, Stack, useStyles2 } from '@grafana/ui';
 import { AppChromeUpdate } from 'app/core/components/AppChrome/AppChromeUpdate';
 import { useAppNotification } from 'app/core/copy/appNotification';
 import { contextSrv } from 'app/core/core';
 import { useCleanup } from 'app/core/hooks/useCleanup';
 import { useQueryParams } from 'app/core/hooks/useQueryParams';
+import InfoPausedRule from 'app/features/alerting/unified/components/InfoPausedRule';
+import { isGrafanaRulerRule, isGrafanaRulerRulePaused } from 'app/features/alerting/unified/utils/rules';
 import { useDispatch } from 'app/types';
 import { RuleWithLocation } from 'app/types/unified-alerting';
-import { RulerRuleDTO } from 'app/types/unified-alerting-dto';
 
-import { LogMessages, trackNewAlerRuleFormError } from '../../../Analytics';
+import {
+  LogMessages,
+  logInfo,
+  trackAlertRuleFormError,
+  trackAlertRuleFormCancelled,
+  trackAlertRuleFormSaved,
+} from '../../../Analytics';
 import { useUnifiedAlertingSelector } from '../../../hooks/useUnifiedAlertingSelector';
 import { deleteRuleAction, saveRuleFormAction } from '../../../state/actions';
 import { RuleFormType, RuleFormValues } from '../../../types/rule-form';
 import { initialAsyncRequestState } from '../../../utils/redux';
 import {
+  MANUAL_ROUTING_KEY,
+  DEFAULT_GROUP_EVALUATION_INTERVAL,
+  formValuesFromExistingRule,
   getDefaultFormValues,
   getDefaultQueries,
-  MINUTE,
+  ignoreHiddenQueries,
   normalizeDefaultAnnotations,
-  rulerRuleToFormValues,
 } from '../../../utils/rule-form';
 import * as ruleId from '../../../utils/rule-id';
 import { GrafanaRuleExporter } from '../../export/GrafanaRuleExporter';
@@ -52,7 +59,7 @@ export const AlertRuleForm = ({ existing, prefill }: Props) => {
   const notifyApp = useAppNotification();
   const [queryParams] = useQueryParams();
   const [showEditYaml, setShowEditYaml] = useState(false);
-  const [evaluateEvery, setEvaluateEvery] = useState(existing?.group.interval ?? MINUTE);
+  const [evaluateEvery, setEvaluateEvery] = useState(existing?.group.interval ?? DEFAULT_GROUP_EVALUATION_INTERVAL);
 
   const routeParams = useParams<{ type: string; id: string }>();
   const ruleType = translateRouteParamToRuleType(routeParams.type);
@@ -111,6 +118,17 @@ export const AlertRuleForm = ({ existing, prefill }: Props) => {
       return;
     }
 
+    trackAlertRuleFormSaved({ formAction: existing ? 'update' : 'create', ruleType: values.type });
+
+    // when creating a new rule, we save the manual routing setting in local storage
+    if (!existing) {
+      if (values.manualRouting) {
+        localStorage.setItem(MANUAL_ROUTING_KEY, 'true');
+      } else {
+        localStorage.setItem(MANUAL_ROUTING_KEY, 'false');
+      }
+    }
+
     dispatch(
       saveRuleFormAction({
         values: {
@@ -146,26 +164,27 @@ export const AlertRuleForm = ({ existing, prefill }: Props) => {
     }
   };
 
-  const onInvalid = (errors: DeepMap<RuleFormValues, FieldError>): void => {
-    if (!existing) {
-      trackNewAlerRuleFormError({
-        grafana_version: config.buildInfo.version,
-        org_id: contextSrv.user.orgId,
-        user_id: contextSrv.user.id,
-        error: Object.keys(errors).toString(),
-      });
-    }
+  const onInvalid: SubmitErrorHandler<RuleFormValues> = (errors): void => {
+    trackAlertRuleFormError({
+      grafana_version: config.buildInfo.version,
+      org_id: contextSrv.user.orgId,
+      user_id: contextSrv.user.id,
+      error: Object.keys(errors).toString(),
+      formAction: existing ? 'update' : 'create',
+    });
     notifyApp.error('There are errors in the form. Please correct them and try again!');
   };
 
   const cancelRuleCreation = () => {
     logInfo(LogMessages.cancelSavingAlertRule);
+    trackAlertRuleFormCancelled({ formAction: existing ? 'update' : 'create' });
   };
+
   const evaluateEveryInForm = watch('evaluateEvery');
   useEffect(() => setEvaluateEvery(evaluateEveryInForm), [evaluateEveryInForm]);
 
   const actionButtons = (
-    <HorizontalGroup height="auto" justify="flex-end">
+    <Stack justifyContent="flex-end" alignItems="center">
       {existing && (
         <Button
           variant="primary"
@@ -198,7 +217,6 @@ export const AlertRuleForm = ({ existing, prefill }: Props) => {
           Delete
         </Button>
       ) : null}
-
       {existing && isCortexLokiOrRecordingRule(watch) && (
         <Button
           variant="secondary"
@@ -210,14 +228,16 @@ export const AlertRuleForm = ({ existing, prefill }: Props) => {
           Edit YAML
         </Button>
       )}
-    </HorizontalGroup>
+    </Stack>
   );
 
+  const isPaused = existing && isGrafanaRulerRule(existing.rule) && isGrafanaRulerRulePaused(existing.rule);
   return (
     <FormProvider {...formAPI}>
       <AppChromeUpdate actions={actionButtons} />
       <form onSubmit={(e) => e.preventDefault()} className={styles.form}>
         <div className={styles.contentOuter}>
+          {isPaused && <InfoPausedRule />}
           <CustomScrollbar autoHeightMin="100%" hideHorizontalTrack={true}>
             <Stack direction="column" gap={3}>
               {/* Step 1 */}
@@ -233,6 +253,7 @@ export const AlertRuleForm = ({ existing, prefill }: Props) => {
                       evaluateEvery={evaluateEvery}
                       setEvaluateEvery={setEvaluateEvery}
                       existing={Boolean(existing)}
+                      enableProvisionedGroups={false}
                     />
                   )}
 
@@ -241,10 +262,10 @@ export const AlertRuleForm = ({ existing, prefill }: Props) => {
                   {type === RuleFormType.cloudRecording && <RecordingRulesNameSpaceAndGroupStep />}
 
                   {/* Step 4 & 5 */}
-                  {/* Annotations only for cloud and Grafana */}
-                  {type !== RuleFormType.cloudRecording && <AnnotationsStep />}
                   {/* Notifications step*/}
                   <NotificationsStep alertUid={uidFromParams} />
+                  {/* Annotations only for cloud and Grafana */}
+                  {type !== RuleFormType.cloudRecording && <AnnotationsStep />}
                 </>
               )}
             </Stack>
@@ -279,17 +300,6 @@ const isCortexLokiOrRecordingRule = (watch: UseFormWatch<RuleFormValues>) => {
   return (ruleType === RuleFormType.cloudAlerting || ruleType === RuleFormType.cloudRecording) && dataSourceName !== '';
 };
 
-// the backend will always execute "hidden" queries, so we have no choice but to remove the property in the front-end
-// to avoid confusion. The query editor shows them as "disabled" and that's a different semantic meaning.
-// furthermore the "AlertingQueryRunner" calls `filterQuery` on each data source and those will skip running queries that are "hidden"."
-// It seems like we have no choice but to act like "hidden" queries don't exist in alerting.
-const ignoreHiddenQueries = (ruleDefinition: RuleFormValues): RuleFormValues => {
-  return {
-    ...ruleDefinition,
-    queries: ruleDefinition.queries?.map((query) => omit(query, 'model.hide')),
-  };
-};
-
 function formValuesFromQueryParams(ruleDefinition: string, type: RuleFormType): RuleFormValues {
   let ruleFromQueryParams: Partial<RuleFormValues>;
 
@@ -308,7 +318,7 @@ function formValuesFromQueryParams(ruleDefinition: string, type: RuleFormType): 
     annotations: normalizeDefaultAnnotations(ruleFromQueryParams.annotations ?? []),
     queries: ruleFromQueryParams.queries ?? getDefaultQueries(),
     type: type || RuleFormType.grafana,
-    evaluateEvery: MINUTE,
+    evaluateEvery: DEFAULT_GROUP_EVALUATION_INTERVAL,
   });
 }
 
@@ -319,9 +329,6 @@ function formValuesFromPrefill(rule: Partial<RuleFormValues>): RuleFormValues {
   });
 }
 
-function formValuesFromExistingRule(rule: RuleWithLocation<RulerRuleDTO>) {
-  return ignoreHiddenQueries(rulerRuleToFormValues(rule));
-}
 const getStyles = (theme: GrafanaTheme2) => ({
   buttonSpinner: css({
     marginRight: theme.spacing(1),
@@ -335,6 +342,7 @@ const getStyles = (theme: GrafanaTheme2) => ({
   contentOuter: css({
     background: theme.colors.background.primary,
     overflow: 'hidden',
+    maxWidth: theme.breakpoints.values.xl,
     flex: 1,
   }),
   flexRow: css({

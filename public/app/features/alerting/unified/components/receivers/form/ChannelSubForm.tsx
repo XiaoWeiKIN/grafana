@@ -1,10 +1,10 @@
 import { css } from '@emotion/css';
 import { sortBy } from 'lodash';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useFormContext, FieldErrors, FieldValues } from 'react-hook-form';
+import { useFormContext, FieldErrors, FieldValues, Controller } from 'react-hook-form';
 
 import { GrafanaTheme2, SelectableValue } from '@grafana/data';
-import { Alert, Button, Field, InputControl, Select, useStyles2 } from '@grafana/ui';
+import { Alert, Button, Field, Select, useStyles2 } from '@grafana/ui';
 
 import { useUnifiedAlertingSelector } from '../../../hooks/useUnifiedAlertingSelector';
 import { ChannelValues, CommonSettingsComponentType } from '../../../types/receiver-form';
@@ -69,7 +69,8 @@ export function ChannelSubForm<R extends ChannelValues>({
   // Prevent forgetting about initial values when switching the integration type and the oncall integration type
   useEffect(() => {
     // Restore values when switching back from a changed integration to the default one
-    const subscription = watch((_, { name, type, value }) => {
+    const subscription = watch((v, { name, type }) => {
+      const value = name ? v[name] : '';
       if (initialValues && name === fieldName('type') && value === initialValues.type && type === 'change') {
         setValue(fieldName('settings'), initialValues.settings);
       }
@@ -133,7 +134,7 @@ export function ChannelSubForm<R extends ChannelValues>({
       <div className={styles.topRow}>
         <div>
           <Field label="Integration" htmlFor={contactPointTypeInputId} data-testid={`${pathPrefix}type`}>
-            <InputControl
+            <Controller
               name={fieldName('type')}
               defaultValue={defaultValues.type}
               render={({ field: { ref, onChange, ...field } }) => (
@@ -159,7 +160,7 @@ export function ChannelSubForm<R extends ChannelValues>({
               variant="secondary"
               type="button"
               onClick={() => handleTest()}
-              icon={testingReceiver ? 'fa fa-spinner' : 'message'}
+              icon={testingReceiver ? 'spinner' : 'message'}
             >
               Test
             </Button>
@@ -226,27 +227,27 @@ export function ChannelSubForm<R extends ChannelValues>({
 }
 
 const getStyles = (theme: GrafanaTheme2) => ({
-  buttons: css`
-    & > * + * {
-      margin-left: ${theme.spacing(1)};
-    }
-  `,
-  innerContent: css`
-    max-width: 536px;
-  `,
-  wrapper: css`
-    margin: ${theme.spacing(2, 0)};
-    padding: ${theme.spacing(1)};
-    border: solid 1px ${theme.colors.border.medium};
-    border-radius: ${theme.shape.radius.default};
-    max-width: ${theme.breakpoints.values.xl}${theme.breakpoints.unit};
-  `,
-  topRow: css`
-    display: flex;
-    flex-direction: row;
-    justify-content: space-between;
-  `,
-  channelSettingsHeader: css`
-    margin-top: ${theme.spacing(2)};
-  `,
+  buttons: css({
+    '& > * + *': {
+      marginLeft: theme.spacing(1),
+    },
+  }),
+  innerContent: css({
+    maxWidth: '536px',
+  }),
+  wrapper: css({
+    margin: theme.spacing(2, 0),
+    padding: theme.spacing(1),
+    border: `solid 1px ${theme.colors.border.medium}`,
+    borderRadius: theme.shape.radius.default,
+    maxWidth: `${theme.breakpoints.values.xl}${theme.breakpoints.unit}`,
+  }),
+  topRow: css({
+    display: 'flex',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  }),
+  channelSettingsHeader: css({
+    marginTop: theme.spacing(2),
+  }),
 });

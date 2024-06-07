@@ -4,7 +4,9 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"time"
 
+	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/plugins"
 	"github.com/grafana/grafana/pkg/plugins/manager/loader"
 	"github.com/grafana/grafana/pkg/plugins/manager/registry"
@@ -16,6 +18,7 @@ var _ Store = (*Service)(nil)
 // Store is the publicly accessible storage for plugins.
 type Store interface {
 	// Plugin finds a plugin by its ID.
+	// Note: version is not required since Grafana only supports single versions of a plugin.
 	Plugin(ctx context.Context, pluginID string) (Plugin, bool)
 	// Plugins returns plugins by their requested type.
 	Plugins(ctx context.Context, pluginTypes ...plugins.Type) []Plugin
@@ -29,11 +32,23 @@ type Service struct {
 func ProvideService(pluginRegistry registry.Service, pluginSources sources.Registry,
 	pluginLoader loader.Service) (*Service, error) {
 	ctx := context.Background()
+	start := time.Now()
+	totalPlugins := 0
+	logger := log.New("plugin.store")
+	logger.Info("Loading plugins...")
+
 	for _, ps := range pluginSources.List(ctx) {
-		if _, err := pluginLoader.Load(ctx, ps); err != nil {
+		loadedPlugins, err := pluginLoader.Load(ctx, ps)
+		if err != nil {
+			logger.Error("Loading plugin source failed", "source", ps.PluginClass(ctx), "error", err)
 			return nil, err
 		}
+
+		totalPlugins += len(loadedPlugins)
 	}
+
+	logger.Info("Plugins loaded", "count", totalPlugins, "duration", time.Since(start))
+
 	return New(pluginRegistry, pluginLoader), nil
 }
 
@@ -79,15 +94,6 @@ func (s *Service) Plugins(ctx context.Context, pluginTypes ...plugins.Type) []Pl
 	return pluginsList
 }
 
-func (s *Service) Renderer(ctx context.Context) *plugins.Plugin {
-	for _, p := range s.availablePlugins(ctx) {
-		if p.IsRenderer() {
-			return p
-		}
-	}
-	return nil
-}
-
 func (s *Service) SecretsManager(ctx context.Context) *plugins.Plugin {
 	for _, p := range s.availablePlugins(ctx) {
 		if p.IsSecretsManager() {
@@ -99,7 +105,7 @@ func (s *Service) SecretsManager(ctx context.Context) *plugins.Plugin {
 
 // plugin finds a plugin with `pluginID` from the registry that is not decommissioned
 func (s *Service) plugin(ctx context.Context, pluginID string) (*plugins.Plugin, bool) {
-	p, exists := s.pluginRegistry.Plugin(ctx, pluginID)
+	p, exists := s.pluginRegistry.Plugin(ctx, pluginID, "") // version is not required since Grafana only supports single versions of a plugin
 	if !exists {
 		return nil, false
 	}

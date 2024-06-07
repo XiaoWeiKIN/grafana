@@ -65,9 +65,9 @@ export function getBarColorByPackage(label: string, theme: GrafanaTheme2) {
 }
 
 // green to red
-const diffDefaultColors = ['rgb(0, 170, 0)', 'rgb(148, 142, 142)', 'rgb(200, 0, 0)'];
+export const diffDefaultColors = ['rgb(0, 170, 0)', 'rgb(148, 142, 142)', 'rgb(200, 0, 0)'];
 export const diffDefaultGradient = `linear-gradient(90deg, ${diffDefaultColors[0]} 0%, ${diffDefaultColors[1]} 50%, ${diffDefaultColors[2]} 100%)`;
-const diffColorBlindColors = ['rgb(26, 133, 255)', 'rgb(148, 142, 142)', 'rgb(220, 50, 32)'];
+export const diffColorBlindColors = ['rgb(26, 133, 255)', 'rgb(148, 142, 142)', 'rgb(220, 50, 32)'];
 export const diffColorBlindGradient = `linear-gradient(90deg, ${diffColorBlindColors[0]} 0%, ${diffColorBlindColors[1]} 50%, ${diffColorBlindColors[2]} 100%)`;
 
 export function getBarColorByDiff(
@@ -112,9 +112,9 @@ export function getBarColorByDiff(
 // the language from the backend and use the right regex but right now we just try all of them from most to least
 // specific.
 const matchers = [
-  ['phpspy', /^(?<packageName>(.*\/)*)(?<filename>.*\.php+)(?<line_info>.*)$/],
-  ['pyspy', /^(?<packageName>(.*\/)*)(?<filename>.*\.py+)(?<line_info>.*)$/],
-  ['rbspy', /^(?<packageName>(.*\/)*)(?<filename>.*\.rb+)(?<line_info>.*)$/],
+  ['phpspy', /^(?<packageName>([^\/]*\/)*)(?<filename>.*\.php+)(?<line_info>.*)$/],
+  ['pyspy', /^(?<packageName>([^\/]*\/)*)(?<filename>.*\.py+)(?<line_info>.*)$/],
+  ['rbspy', /^(?<packageName>([^\/]*\/)*)(?<filename>.*\.rb+)(?<line_info>.*)$/],
   [
     'nodespy',
     /^(\.\/node_modules\/)?(?<packageName>[^/]*)(?<filename>.*\.?(jsx?|tsx?)?):(?<functionName>.*):(?<line_info>.*)$/,

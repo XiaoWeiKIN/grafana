@@ -2,31 +2,33 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
 import { Provider } from 'react-redux';
-import { AutoSizerProps } from 'react-virtualized-auto-sizer';
+import { Props } from 'react-virtualized-auto-sizer';
 import { byRole, byTestId, byText } from 'testing-library-selector';
 
-import { logInfo } from '@grafana/runtime';
 import { contextSrv } from 'app/core/services/context_srv';
 import { configureStore } from 'app/store/configureStore';
+import { AccessControlAction } from 'app/types';
 import { CombinedRuleGroup, CombinedRuleNamespace } from 'app/types/unified-alerting';
 
-import { LogMessages } from '../../Analytics';
+import * as analytics from '../../Analytics';
 import { useHasRuler } from '../../hooks/useHasRuler';
-import { mockFolderApi, mockProvisioningApi, setupMswServer } from '../../mockApi';
-import { disableRBAC, mockCombinedRule, mockDataSource, mockFolder, mockGrafanaRulerRule } from '../../mocks';
+import { mockExportApi, mockFolderApi, setupMswServer } from '../../mockApi';
+import { grantUserPermissions, mockCombinedRule, mockDataSource, mockFolder, mockGrafanaRulerRule } from '../../mocks';
 
 import { RulesGroup } from './RulesGroup';
 
 jest.mock('../../hooks/useHasRuler');
-jest.mock('@grafana/runtime', () => {
-  const original = jest.requireActual('@grafana/runtime');
-  return {
-    ...original,
-    logInfo: jest.fn(),
-  };
-});
+
+jest.spyOn(analytics, 'logInfo');
+
 jest.mock('react-virtualized-auto-sizer', () => {
-  return ({ children }: AutoSizerProps) => children({ height: 600, width: 1 });
+  return ({ children }: Props) =>
+    children({
+      height: 600,
+      scaledHeight: 600,
+      scaledWidth: 1,
+      width: 1,
+    });
 });
 jest.mock('@grafana/ui', () => ({
   ...jest.requireActual('@grafana/ui'),
@@ -46,6 +48,8 @@ function mockUseHasRuler(hasRuler: boolean, rulerRulesLoaded: boolean) {
 
 beforeEach(() => {
   mocks.useHasRuler.mockReset();
+  // FIXME: scope down
+  grantUserPermissions(Object.values(AccessControlAction));
 });
 
 const ui = {
@@ -58,7 +62,7 @@ const ui = {
   },
   moreActionsButton: byRole('button', { name: 'More' }),
   export: {
-    dialog: byRole('dialog', { name: 'Drawer title Export' }),
+    dialog: byRole('dialog', { name: /Drawer title Export .* rules/ }),
     jsonTab: byRole('tab', { name: /JSON/ }),
     yamlTab: byRole('tab', { name: /YAML/ }),
     editor: byTestId('code-editor'),
@@ -104,10 +108,12 @@ describe('Rules group tests', () => {
       groups: [group],
     };
 
-    it('Should hide delete and edit group buttons', () => {
+    it('Should hide delete and edit group buttons', async () => {
       // Act
       mockUseHasRuler(true, true);
+      mockFolderApi(server).folder('cpu-usage', mockFolder({ uid: 'cpu-usage', canSave: false }));
       renderRulesGroup(namespace, group);
+      expect(await screen.findByTestId('rule-group')).toBeInTheDocument();
 
       // Assert
       expect(ui.deleteGroupButton.query()).not.toBeInTheDocument();
@@ -118,7 +124,7 @@ describe('Rules group tests', () => {
       // Arrange
       mockUseHasRuler(true, true);
       mockFolderApi(server).folder('cpu-usage', mockFolder({ uid: 'cpu-usage' }));
-      mockProvisioningApi(server).exportRuleGroup('cpu-usage', 'TestGroup', {
+      mockExportApi(server).exportRulesGroup('cpu-usage', 'TestGroup', {
         yaml: 'Yaml Export Content',
         json: 'Json Export Content',
       });
@@ -163,8 +169,6 @@ describe('Rules group tests', () => {
       rulesSource: mockDataSource(),
       groups: [group],
     };
-
-    disableRBAC();
 
     it('When ruler enabled should display delete and edit group buttons', () => {
       // Arrange
@@ -223,8 +227,6 @@ describe('Rules group tests', () => {
       groups: [group],
     };
 
-    disableRBAC();
-
     it('Should log info when closing the edit group rule modal without saving', async () => {
       mockUseHasRuler(true, true);
       renderRulesGroup(namespace, group);
@@ -236,7 +238,7 @@ describe('Rules group tests', () => {
       await userEvent.click(screen.getByText('Cancel'));
 
       expect(screen.queryByText('Cancel')).not.toBeInTheDocument();
-      expect(logInfo).toHaveBeenCalledWith(LogMessages.leavingRuleGroupEdit);
+      expect(analytics.logInfo).toHaveBeenCalledWith(analytics.LogMessages.leavingRuleGroupEdit);
     });
   });
 });

@@ -9,6 +9,7 @@ import { reportInteraction } from '@grafana/runtime';
 import { getSelectStyles, Select, AsyncSelect, useStyles2, useTheme2 } from '@grafana/ui';
 
 import CloudMonitoringDatasource from '../datasource';
+import { selectors } from '../e2e/selectors';
 import { getAlignmentPickerData, getMetricType, setMetricType } from '../functions';
 import { PreprocessorType, TimeSeriesList, MetricKind, ValueTypes } from '../types/query';
 import { CustomMetaData, MetricDescriptor } from '../types/types';
@@ -30,6 +31,7 @@ export interface Props {
   variableOptionGroup: SelectableValue<string>;
   aliasBy?: string;
   onChangeAliasBy: (aliasBy: string) => void;
+  range: TimeRange;
 }
 
 export function Editor({
@@ -41,14 +43,15 @@ export function Editor({
   customMetaData,
   aliasBy,
   onChangeAliasBy,
+  range,
 }: React.PropsWithChildren<Props>) {
-  const [labels, setLabels] = useState<{ [k: string]: any }>({});
+  const [labels, setLabels] = useState<{ [k: string]: string[] }>({});
   const [metricDescriptors, setMetricDescriptors] = useState<MetricDescriptor[]>([]);
   const [metricDescriptor, setMetricDescriptor] = useState<MetricDescriptor>();
   const [metrics, setMetrics] = useState<Array<SelectableValue<string>>>([]);
   const [services, setServices] = useState<Array<SelectableValue<string>>>([]);
   const [service, setService] = useState<string>('');
-  const [timeRange, setTimeRange] = useState<TimeRange>({ ...datasource.timeSrv.timeRange() });
+  const [timeRange, setTimeRange] = useState<TimeRange>({ ...range });
 
   const useTime = (time: TimeRange) => {
     if (
@@ -60,7 +63,7 @@ export function Editor({
     }
   };
 
-  useTime(datasource.timeSrv.timeRange());
+  useTime(range);
 
   const theme = useTheme2();
   const selectStyles = getSelectStyles(theme);
@@ -221,7 +224,7 @@ export function Editor({
   };
 
   return (
-    <>
+    <span data-testid={selectors.components.queryEditor.visualMetricsQueryEditor.container.input}>
       <EditorRow>
         <EditorFieldGroup>
           <Project
@@ -304,7 +307,7 @@ export function Editor({
           <AliasBy refId={refId} value={aliasBy} onChange={onChangeAliasBy} />
         </EditorRow>
       </>
-    </>
+    </span>
   );
 }
 

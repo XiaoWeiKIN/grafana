@@ -1,9 +1,12 @@
 package channels_config
 
 import (
+	"fmt"
 	"os"
+	"strings"
 
 	alertingOpsgenie "github.com/grafana/alerting/receivers/opsgenie"
+	alertingPagerduty "github.com/grafana/alerting/receivers/pagerduty"
 	alertingTemplates "github.com/grafana/alerting/templates"
 )
 
@@ -265,6 +268,7 @@ func GetAvailableNotifiers() []*NotifierPlugin {
 					Description:  "Optional message. You can use templates to customize this field. Using a custom message will replace the default message",
 					Element:      ElementTypeTextArea,
 					PropertyName: "message",
+					Placeholder:  alertingTemplates.DefaultMessageEmbed,
 				},
 				{ // New in 9.0.
 					Label:        "Subject",
@@ -359,6 +363,14 @@ func GetAvailableNotifiers() []*NotifierPlugin {
 					Element:      ElementTypeKeyValueMap,
 					InputType:    InputTypeText,
 					PropertyName: "details",
+				},
+				{ //New in 11.1
+					Label:        "URL",
+					Description:  "The URL to send API requests to",
+					Element:      ElementTypeInput,
+					InputType:    InputTypeText,
+					Placeholder:  alertingPagerduty.DefaultURL,
+					PropertyName: "url",
 				},
 			},
 		},
@@ -812,6 +824,15 @@ func GetAvailableNotifiers() []*NotifierPlugin {
 					Description:  "Integer Telegram Chat Identifier",
 					PropertyName: "chatid",
 					Required:     true,
+				},
+				{
+					Label:          "Message Thread ID",
+					Element:        ElementTypeInput,
+					InputType:      InputTypeText,
+					Description:    "Integer Telegram Message Thread Identifier",
+					PropertyName:   "message_thread_id",
+					Required:       false,
+					ValidationRule: "-?[0-9]{1,10}",
 				},
 				{ // New in 8.0.
 					Label:        "Message",
@@ -1269,7 +1290,7 @@ func GetAvailableNotifiers() []*NotifierPlugin {
 				}, {
 					Label:        "Override priority",
 					Element:      ElementTypeCheckbox,
-					Description:  "Allow the alert priority to be set using the og_priority annotation",
+					Description:  "Allow the alert priority to be set using the og_priority label.",
 					PropertyName: "overridePriority",
 				},
 				{
@@ -1291,6 +1312,40 @@ func GetAvailableNotifiers() []*NotifierPlugin {
 					},
 					Description:  "Send the common annotations to Opsgenie as either Extra Properties, Tags or both",
 					PropertyName: "sendTagsAs",
+				},
+				// New in 10.3
+				{
+					Label:        "Responders",
+					PropertyName: "responders",
+					Description:  "If the API key belongs to a team, this field is ignored.",
+					Element:      ElementSubformArray,
+					SubformOptions: []NotifierOption{
+						{
+							Label:        "Type",
+							Description:  fmt.Sprintf("%s or a template", strings.Join(alertingOpsgenie.SupportedResponderTypes, ", ")),
+							Element:      ElementTypeInput,
+							Required:     true,
+							PropertyName: "type",
+						},
+						{
+							Label:        "Name",
+							Element:      ElementTypeInput,
+							Description:  "Name of the responder. Must be specified if ID and Username are empty or if the type is 'teams'.",
+							PropertyName: "name",
+						},
+						{
+							Label:        "ID",
+							Element:      ElementTypeInput,
+							Description:  "ID of the responder. Must be specified if name and Username are empty.",
+							PropertyName: "id",
+						},
+						{
+							Label:        "Username",
+							Element:      ElementTypeInput,
+							Description:  "User name of the responder. Must be specified if ID and Name are empty.",
+							PropertyName: "username",
+						},
+					},
 				},
 			},
 		},
@@ -1339,4 +1394,21 @@ func GetAvailableNotifiers() []*NotifierPlugin {
 			},
 		},
 	}
+}
+
+// GetSecretKeysForContactPointType returns settings keys of contact point of the given type that are expected to be secrets. Returns error is contact point type is not known.
+func GetSecretKeysForContactPointType(contactPointType string) ([]string, error) {
+	notifiers := GetAvailableNotifiers()
+	for _, n := range notifiers {
+		if n.Type == contactPointType {
+			var secureFields []string
+			for _, field := range n.Options {
+				if field.Secure {
+					secureFields = append(secureFields, field.PropertyName)
+				}
+			}
+			return secureFields, nil
+		}
+	}
+	return nil, fmt.Errorf("no secrets configured for type '%s'", contactPointType)
 }

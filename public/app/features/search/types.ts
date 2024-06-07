@@ -17,6 +17,7 @@ export enum DashboardSearchItemType {
  * extraneous properties
  */
 export interface DashboardSearchHit extends WithAccessControlMetadata {
+  /** @deprecated use folderUid */
   folderId?: number;
   folderTitle?: string;
   folderUid?: string;
@@ -100,6 +101,7 @@ export interface SearchState {
   folderUid?: string;
   includePanels?: boolean;
   eventTrackingNamespace: EventTrackingNamespace;
+  deleted: boolean;
 }
 
 export type OnToggleChecked = (item: DashboardViewItem) => void;

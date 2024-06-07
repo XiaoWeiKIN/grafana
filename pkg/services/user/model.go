@@ -1,7 +1,6 @@
 package user
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -20,31 +19,27 @@ const (
 	HelpFlagDashboardHelp1
 )
 
-// Typed errors
-var (
-	ErrCaseInsensitive   = errors.New("case insensitive conflict")
-	ErrUserNotFound      = errors.New("user not found")
-	ErrUserAlreadyExists = errors.New("user already exists")
-	ErrLastGrafanaAdmin  = errors.New("cannot remove last grafana admin")
-	ErrProtectedUser     = errors.New("cannot adopt protected user")
-	ErrNoUniqueID        = errors.New("identifying id not found")
-	ErrLastSeenUpToDate  = errors.New("last seen is already up to date")
-	ErrUpdateInvalidID   = errors.New("unable to update invalid id")
+type UpdateEmailActionType string
+
+const (
+	EmailUpdateAction UpdateEmailActionType = "email-update"
+	LoginUpdateAction UpdateEmailActionType = "login-update"
 )
 
 type User struct {
-	ID            int64 `xorm:"pk autoincr 'id'"`
+	ID            int64  `xorm:"pk autoincr 'id'"`
+	UID           string `json:"uid" xorm:"uid"`
 	Version       int
 	Email         string
 	Name          string
 	Login         string
-	Password      string
+	Password      Password
 	Salt          string
 	Rands         string
 	Company       string
 	EmailVerified bool
 	Theme         string
-	HelpFlags1    HelpFlags1
+	HelpFlags1    HelpFlags1 `xorm:"help_flags1"`
 	IsDisabled    bool
 
 	IsAdmin          bool
@@ -57,13 +52,14 @@ type User struct {
 }
 
 type CreateUserCommand struct {
+	UID              string
 	Email            string
 	Login            string
 	Name             string
 	Company          string
 	OrgID            int64
 	OrgName          string
-	Password         string
+	Password         Password
 	EmailVerified    bool
 	IsAdmin          bool
 	IsDisabled       bool
@@ -86,22 +82,20 @@ type UpdateUserCommand struct {
 	Login string `json:"login"`
 	Theme string `json:"theme"`
 
-	UserID int64 `json:"-"`
-}
-
-type ChangeUserPasswordCommand struct {
-	OldPassword string `json:"oldPassword"`
-	NewPassword string `json:"newPassword"`
-
-	UserID int64 `json:"-"`
+	UserID         int64 `json:"-"`
+	IsDisabled     *bool `json:"-"`
+	EmailVerified  *bool `json:"-"`
+	IsGrafanaAdmin *bool `json:"-"`
+	// If password is included it will be validated, hashed and updated for user.
+	Password *Password `json:"-"`
+	// If old password is included it will be validated against users current password.
+	OldPassword *Password `json:"-"`
+	// If OrgID is included update current org for user
+	OrgID      *int64      `json:"-"`
+	HelpFlags1 *HelpFlags1 `json:"-"`
 }
 
 type UpdateUserLastSeenAtCommand struct {
-	UserID int64
-	OrgID  int64
-}
-
-type SetUsingOrgCommand struct {
 	UserID int64
 	OrgID  int64
 }
@@ -128,6 +122,7 @@ type SearchUserQueryResult struct {
 
 type UserSearchHitDTO struct {
 	ID            int64                `json:"id" xorm:"id"`
+	UID           string               `json:"uid" xorm:"id"`
 	Name          string               `json:"name"`
 	Login         string               `json:"login"`
 	Email         string               `json:"email"`
@@ -146,6 +141,7 @@ type GetUserProfileQuery struct {
 
 type UserProfileDTO struct {
 	ID                             int64           `json:"id"`
+	UID                            string          `json:"uid"`
 	Email                          string          `json:"email"`
 	Name                           string          `json:"name"`
 	Login                          string          `json:"login"`
@@ -177,19 +173,9 @@ func (auth *AuthModuleConversion) ToDB() ([]byte, error) {
 	return []byte{}, nil
 }
 
-type DisableUserCommand struct {
-	UserID     int64 `xorm:"user_id"`
-	IsDisabled bool
-}
-
 type BatchDisableUsersCommand struct {
 	UserIDs    []int64 `xorm:"user_ids"`
 	IsDisabled bool
-}
-
-type SetUserHelpFlagCommand struct {
-	HelpFlags1 HelpFlags1
-	UserID     int64 `xorm:"user_id"`
 }
 
 type GetSignedInUserQuery struct {
@@ -222,15 +208,19 @@ type GetUserByIDQuery struct {
 	ID int64
 }
 
-type ErrCaseInsensitiveLoginConflict struct {
-	Users []User
+type StartVerifyEmailCommand struct {
+	User   User
+	Email  string
+	Action UpdateEmailActionType
 }
 
-type UserDisplayDTO struct {
-	ID        int64  `json:"id,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Login     string `json:"login,omitempty"`
-	AvatarURL string `json:"avatarUrl"`
+type CompleteEmailVerifyCommand struct {
+	User identity.Requester
+	Code string
+}
+
+type ErrCaseInsensitiveLoginConflict struct {
+	Users []User
 }
 
 func (e *ErrCaseInsensitiveLoginConflict) Unwrap() error {
@@ -289,8 +279,7 @@ type AdminCreateUserResponse struct {
 	Message string `json:"message"`
 }
 
-type Password string
-
-func (p Password) IsWeak() bool {
-	return len(p) <= 4
+type ChangeUserPasswordCommand struct {
+	OldPassword Password `json:"oldPassword"`
+	NewPassword Password `json:"newPassword"`
 }

@@ -5,10 +5,9 @@ import { useLocation } from 'react-router-dom';
 import { locationUtil, NavModel, NavModelItem } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
 import { locationService } from '@grafana/runtime';
-import { Button, ToolbarButtonRow } from '@grafana/ui';
+import { Button, Stack, Text, ToolbarButtonRow } from '@grafana/ui';
 import { AppChromeUpdate } from 'app/core/components/AppChrome/AppChromeUpdate';
 import { Page } from 'app/core/components/Page/Page';
-import config from 'app/core/config';
 import { t } from 'app/core/internationalization';
 import { contextSrv } from 'app/core/services/context_srv';
 import { AccessControlAction } from 'app/types';
@@ -17,7 +16,6 @@ import { DashboardMetaChangedEvent } from 'app/types/events';
 import { VariableEditorContainer } from '../../../variables/editor/VariableEditorContainer';
 import { DashboardModel } from '../../state/DashboardModel';
 import { AccessControlDashboardPermissions } from '../DashboardPermissions/AccessControlDashboardPermissions';
-import { DashboardPermissions } from '../DashboardPermissions/DashboardPermissions';
 import { SaveDashboardAsButton, SaveDashboardButton } from '../SaveDashboard/SaveDashboardButton';
 
 import { AnnotationsSettings } from './AnnotationsSettings';
@@ -55,7 +53,7 @@ export function DashboardSettings({ dashboard, editview, pageNav, sectionNav }: 
   const canSave = dashboard.meta.canSave;
   const location = useLocation();
   const editIndex = getEditIndex(location);
-  const subSectionNav = getSectionNav(pageNav, sectionNav, pages, currentPage, location);
+  const subSectionNav = getSectionNav(pageNav, sectionNav, pages, currentPage, location, dashboard.uid);
   const size = 'sm';
 
   const actions = [
@@ -148,14 +146,7 @@ function getSettingsPages(dashboard: DashboardModel) {
   const permissionsTitle = t('dashboard-settings.permissions.title', 'Permissions');
 
   if (dashboard.id && dashboard.meta.canAdmin) {
-    if (!config.rbacEnabled) {
-      pages.push({
-        title: permissionsTitle,
-        id: 'permissions',
-        icon: 'lock',
-        component: DashboardPermissions,
-      });
-    } else if (contextSrv.hasPermission(AccessControlAction.DashboardsPermissionsRead)) {
+    if (contextSrv.hasPermission(AccessControlAction.DashboardsPermissionsRead)) {
       pages.push({
         title: permissionsTitle,
         id: 'permissions',
@@ -187,24 +178,21 @@ function getSectionNav(
   sectionNav: NavModel,
   pages: SettingsPage[],
   currentPage: SettingsPage,
-  location: H.Location
+  location: H.Location,
+  dashboardUid: string
 ): NavModel {
   const main: NavModelItem = {
     text: t('dashboard-settings.settings.title', 'Settings'),
     children: [],
     icon: 'apps',
-    hideFromBreadcrumbs: true,
+    hideFromBreadcrumbs: false,
+    url: locationUtil.getUrlForPartial(location, { editview: 'settings', editIndex: null }),
   };
-
-  if (config.featureToggles.dockedMegaMenu) {
-    main.hideFromBreadcrumbs = false;
-    main.url = locationUtil.getUrlForPartial(location, { editview: 'settings', editIndex: null });
-  }
 
   main.children = pages.map((page) => ({
     text: page.title,
     icon: page.icon,
-    id: page.id,
+    id: `${dashboardUid}/${page.id}`,
     url: locationUtil.getUrlForPartial(location, { editview: page.id, editIndex: null }),
     active: page === currentPage,
     parentItem: main,
@@ -224,10 +212,12 @@ function getSectionNav(
 function MakeEditable({ dashboard, sectionNav }: SettingsPageProps) {
   return (
     <Page navModel={sectionNav}>
-      <div className="dashboard-settings__header">Dashboard not editable</div>
-      <Button type="submit" onClick={() => dashboard.makeEditable()}>
-        Make editable
-      </Button>
+      <Stack direction="column" gap={2} alignItems="flex-start">
+        <Text variant="h3">Dashboard not editable</Text>
+        <Button type="submit" onClick={() => dashboard.makeEditable()}>
+          Make editable
+        </Button>
+      </Stack>
     </Page>
   );
 }

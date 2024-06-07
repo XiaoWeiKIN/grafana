@@ -6,7 +6,7 @@ export interface Props {
   label: string;
   removeIcon: boolean;
   count: number;
-  onClick?: React.MouseEventHandler<HTMLDivElement>;
+  onClick?: React.MouseEventHandler<SVGElement>;
 }
 
 export class TagBadge extends React.Component<Props> {
@@ -22,7 +22,7 @@ export class TagBadge extends React.Component<Props> {
       backgroundColor: color,
     };
 
-    const countLabel = count !== 0 && <span className="tag-count-label">{`(${count})`}</span>;
+    const countLabel = count !== 0 && <span style={{ marginLeft: '3px' }}>{`(${count})`}</span>;
 
     return (
       <span className={`label label-tag`} style={tagStyle}>

@@ -6,11 +6,9 @@ import { default as ReactAsyncSelect } from 'react-select/async';
 import Creatable from 'react-select/creatable';
 
 // Components
-import { SelectableValue } from '@grafana/data';
+import { SelectableValue, ThemeContext } from '@grafana/data';
 
-import { ThemeContext } from '../../../../themes';
 import { CustomScrollbar } from '../../../CustomScrollbar/CustomScrollbar';
-import { SelectOptionGroup } from '../../../Select/SelectOptionGroup';
 import { SingleValue } from '../../../Select/SingleValue';
 import resetSelectStyles from '../../../Select/resetSelectStyles';
 import { SelectCommonProps, SelectAsyncProps } from '../../../Select/types';
@@ -19,6 +17,7 @@ import { Tooltip, PopoverContent } from '../../../Tooltip';
 import IndicatorsContainer from './IndicatorsContainer';
 import NoOptionsMessage from './NoOptionsMessage';
 import { SelectOption } from './SelectOption';
+import { SelectOptionGroup } from './SelectOptionGroup';
 
 /**
  * Changes in new selects:
@@ -51,6 +50,8 @@ export const MenuList = (props: MenuListProps) => {
     </components.MenuList>
   );
 };
+
+/** @deprecated Please use the `Select` component, as seen {@link https://developers.grafana.com/ui/latest/index.html?path=/story/forms-select--basic in Storybook}. */
 export class Select<T> extends PureComponent<LegacySelectProps<T>> {
   declare context: React.ContextType<typeof ThemeContext>;
   static contextType = ThemeContext;
@@ -168,6 +169,7 @@ export class Select<T> extends PureComponent<LegacySelectProps<T>> {
   }
 }
 
+/** @deprecated Please use the `Select` component with async functionality, as seen {@link https://developers.grafana.com/ui/latest/index.html?path=/story/forms-select--basic-select-async in Storybook}. */
 export class AsyncSelect<T> extends PureComponent<AsyncProps<T>> {
   static contextType = ThemeContext;
 

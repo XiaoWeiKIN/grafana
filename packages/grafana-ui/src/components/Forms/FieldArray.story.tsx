@@ -1,4 +1,4 @@
-import { Meta, Story } from '@storybook/react';
+import { Meta, StoryFn } from '@storybook/react';
 import React from 'react';
 import { FieldValues } from 'react-hook-form';
 
@@ -9,7 +9,7 @@ import { withStoryContainer } from '../../utils/storybook/withStoryContainer';
 import { FieldArray } from './FieldArray';
 import mdx from './FieldArray.mdx';
 
-export default {
+const meta: Meta = {
   title: 'Forms/FieldArray',
   component: FieldArray,
   decorators: [withStoryContainer],
@@ -25,9 +25,11 @@ export default {
     containerWidth: { control: { type: 'range', min: 100, max: 500, step: 10 } },
     containerHeight: { control: { type: 'range', min: 100, max: 500, step: 10 } },
   },
-} as Meta;
+};
 
-export const Simple: Story = (args) => {
+export default meta;
+
+export const Simple: StoryFn = (args) => {
   const defaultValues: FieldValues = {
     people: [{ firstName: 'Janis', lastName: 'Joplin' }],
   };

@@ -9,15 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/grafana/grafana-azure-sdk-go/azcredentials"
+	"github.com/grafana/grafana-azure-sdk-go/v2/azcredentials"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/backend/log"
 	"github.com/grafana/grafana/pkg/tsdb/azuremonitor/kinds/dataquery"
-)
-
-const (
-	TimeSeries = "time_series"
-	Table      = "table"
-	Trace      = "trace"
 )
 
 var (
@@ -30,22 +25,10 @@ type AzRoute struct {
 	Headers map[string]string
 }
 
-type AzureSettings struct {
-	AzureMonitorSettings
-	AzureClientSettings
-}
-
 type AzureMonitorSettings struct {
 	SubscriptionId               string `json:"subscriptionId"`
 	LogAnalyticsDefaultWorkspace string `json:"logAnalyticsDefaultWorkspace"`
 	AppInsightsAppId             string `json:"appInsightsAppId"`
-}
-
-type AzureClientSettings struct {
-	AzureAuthType string
-	CloudName     string
-	TenantId      string
-	ClientId      string
 }
 
 // AzureMonitorCustomizedCloudSettings is the extended Azure Monitor settings for customized cloud
@@ -56,10 +39,10 @@ type AzureMonitorCustomizedCloudSettings struct {
 type DatasourceService struct {
 	URL        string
 	HTTPClient *http.Client
+	Logger     log.Logger
 }
 
 type DatasourceInfo struct {
-	Cloud       string
 	Credentials azcredentials.AzureCredentials
 	Settings    AzureMonitorSettings
 	Routes      map[string]AzRoute

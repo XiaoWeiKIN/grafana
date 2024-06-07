@@ -60,10 +60,16 @@ export function getVariableName(expression: string) {
     return undefined;
   }
   const variableName = match.slice(1).find((match) => match !== undefined);
+
+  // ignore variables that match inherited object prop names
+  if (variableName! in {}) {
+    return undefined;
+  }
+
   return variableName;
 }
 
-export const getUnknownVariableStrings = (variables: VariableModel[], model: any) => {
+export const getUnknownVariableStrings = (variables: VariableModel[], model: DashboardModel) => {
   variableRegex.lastIndex = 0;
   const unknownVariableNames: string[] = [];
   const modelAsString = safeStringifyValue(model, 2);
@@ -193,7 +199,7 @@ export const createUsagesNetwork = (variables: VariableModel[], dashboard: Dashb
 
   const unUsed: VariableModel[] = [];
   let usages: VariableUsageTree[] = [];
-  const model = dashboard.getSaveModelClone();
+  const model = dashboard.getSaveModelCloneOld();
 
   for (const variable of variables) {
     const variableId = variable.id;
@@ -233,7 +239,7 @@ function createUnknownsNetwork(variables: VariableModel[], dashboard: DashboardM
   }
 
   let unknown: VariableUsageTree[] = [];
-  const model = dashboard.getSaveModelClone();
+  const model = dashboard.getSaveModelCloneOld();
 
   const unknownVariables = getUnknownVariableStrings(variables, model);
   for (const unknownVariable of unknownVariables) {
@@ -336,7 +342,7 @@ export const transformUsagesToNetwork = (usages: VariableUsageTree[]): UsagesToN
 };
 
 const countLeaves = (object: object): number => {
-  const total = Object.values(object).reduce((count: number, value: any) => {
+  const total = Object.values(object).reduce<number>((count, value) => {
     if (typeof value === 'object') {
       return count + countLeaves(value);
     }

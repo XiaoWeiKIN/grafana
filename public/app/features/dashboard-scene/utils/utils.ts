@@ -1,15 +1,29 @@
-import { UrlQueryMap, urlUtil } from '@grafana/data';
-import { config, locationSearchToObject } from '@grafana/runtime';
+import { getDataSourceRef, IntervalVariableModel } from '@grafana/data';
+import { getDataSourceSrv } from '@grafana/runtime';
 import {
+  CustomVariable,
   MultiValueVariable,
   SceneDataTransformer,
   sceneGraph,
+  SceneGridRow,
   SceneObject,
   SceneQueryRunner,
   VizPanel,
+  VizPanelMenu,
 } from '@grafana/scenes';
+import { initialIntervalVariableModelState } from 'app/features/variables/interval/reducer';
 
+import { DashboardDatasourceBehaviour } from '../scene/DashboardDatasourceBehaviour';
 import { DashboardScene } from '../scene/DashboardScene';
+import { LibraryVizPanel } from '../scene/LibraryVizPanel';
+import { VizPanelLinks, VizPanelLinksMenu } from '../scene/PanelLinks';
+import { panelMenuBehavior } from '../scene/PanelMenuBehavior';
+import { RowActions } from '../scene/row-actions/RowActions';
+
+import { dashboardSceneGraph } from './dashboardSceneGraph';
+
+export const NEW_PANEL_HEIGHT = 8;
+export const NEW_PANEL_WIDTH = 12;
 
 export function getVizPanelKeyForPanelId(panelId: number) {
   return `panel-${panelId}`;
@@ -19,8 +33,12 @@ export function getPanelIdForVizPanel(panel: SceneObject): number {
   return parseInt(panel.state.key!.replace('panel-', ''), 10);
 }
 
+export function getPanelIdForLibraryVizPanel(panel: LibraryVizPanel): number {
+  return parseInt(panel.state.panelKey!.replace('panel-', ''), 10);
+}
+
 /**
- * This will also  try lookup based on panelId
+ * This will also try lookup based on panelId
  */
 export function findVizPanelByKey(scene: SceneObject, key: string | undefined): VizPanel | null {
   if (!key) {
@@ -46,7 +64,20 @@ function findVizPanelInternal(scene: SceneObject, key: string | undefined): VizP
     return null;
   }
 
-  const panel = sceneGraph.findObject(scene, (obj) => obj.state.key === key);
+  const panel = sceneGraph.findObject(scene, (obj) => {
+    const objKey = obj.state.key!;
+
+    if (objKey === key) {
+      return true;
+    }
+
+    if (!(obj instanceof VizPanel)) {
+      return false;
+    }
+
+    return false;
+  });
+
   if (panel) {
     if (panel instanceof VizPanel) {
       return panel;
@@ -78,63 +109,7 @@ export function forceRenderChildren(model: SceneObject, recursive?: boolean) {
   });
 }
 
-export interface DashboardUrlOptions {
-  uid?: string;
-  subPath?: string;
-  updateQuery?: UrlQueryMap;
-  /** Set to location.search to preserve current params */
-  currentQueryParams: string;
-  /** * Returns solo panel route instead */
-  soloRoute?: boolean;
-  /** return render url */
-  render?: boolean;
-  /** Return an absolute URL */
-  absolute?: boolean;
-  // Add tz to query params
-  timeZone?: string;
-}
-
-export function getDashboardUrl(options: DashboardUrlOptions) {
-  let path = `/scenes/dashboard/${options.uid}${options.subPath ?? ''}`;
-
-  if (options.soloRoute) {
-    path = `/d-solo/${options.uid}${options.subPath ?? ''}`;
-  }
-
-  if (options.render) {
-    path = '/render' + path;
-
-    options.updateQuery = {
-      ...options.updateQuery,
-      width: 1000,
-      height: 500,
-      tz: options.timeZone,
-    };
-  }
-
-  const params = options.currentQueryParams ? locationSearchToObject(options.currentQueryParams) : {};
-
-  if (options.updateQuery) {
-    for (const key of Object.keys(options.updateQuery)) {
-      // removing params with null | undefined
-      if (options.updateQuery[key] === null || options.updateQuery[key] === undefined) {
-        delete params[key];
-      } else {
-        params[key] = options.updateQuery[key];
-      }
-    }
-  }
-
-  const relativeUrl = urlUtil.renderUrl(path, params);
-
-  if (options.absolute) {
-    return config.appUrl + relativeUrl.slice(1);
-  }
-
-  return relativeUrl;
-}
-
-export function getMultiVariableValues(variable: MultiValueVariable) {
+export function getMultiVariableValues(variable: MultiValueVariable | CustomVariable) {
   const { value, text, options } = variable.state;
 
   if (variable.hasAllValue()) {
@@ -150,17 +125,71 @@ export function getMultiVariableValues(variable: MultiValueVariable) {
   };
 }
 
+// used to transform old interval model to new interval model from scenes
+export function getIntervalsFromQueryString(query: string): string[] {
+  // separate intervals by quotes either single or double
+  const matchIntervals = query.match(/(["'])(.*?)\1|\w+/g);
+
+  // If no intervals are found in query, return the initial state of the interval reducer.
+  if (!matchIntervals) {
+    return initialIntervalVariableModelState.query?.split(',') ?? [];
+  }
+  const uniqueIntervals = new Set<string>();
+
+  // when options are defined in variable.query
+  const intervals = matchIntervals.reduce((uniqueIntervals: Set<string>, text: string) => {
+    // Remove surrounding quotes from the interval value.
+    const intervalValue = text.replace(/["']+/g, '');
+
+    // Skip intervals that start with "$__auto_interval_",scenes will handle them.
+    if (intervalValue.startsWith('$__auto_interval_')) {
+      return uniqueIntervals;
+    }
+
+    // Add the interval if it's not already in the Set.
+    uniqueIntervals.add(intervalValue);
+    return uniqueIntervals;
+  }, uniqueIntervals);
+
+  return Array.from(intervals);
+}
+
+// Transform new interval scene model to old interval core model
+export function getIntervalsQueryFromNewIntervalModel(intervals: string[]): string {
+  const variableQuery = Array.isArray(intervals) ? intervals.join(',') : '';
+  return variableQuery;
+}
+
+export function getCurrentValueForOldIntervalModel(variable: IntervalVariableModel, intervals: string[]): string {
+  const selectedInterval = Array.isArray(variable.current.value) ? variable.current.value[0] : variable.current.value;
+
+  // If the interval is the old auto format, return the new auto interval from scenes.
+  if (selectedInterval.startsWith('$__auto_interval_')) {
+    return '$__auto';
+  }
+
+  // Check if the selected interval is valid.
+  if (intervals.includes(selectedInterval)) {
+    return selectedInterval;
+  }
+
+  // If the selected interval is not valid, return the first valid interval.
+  return intervals[0];
+}
+
 export function getQueryRunnerFor(sceneObject: SceneObject | undefined): SceneQueryRunner | undefined {
   if (!sceneObject) {
     return undefined;
   }
 
-  if (sceneObject.state.$data instanceof SceneQueryRunner) {
-    return sceneObject.state.$data;
+  const dataProvider = sceneObject.state.$data ?? sceneObject.parent?.state.$data;
+
+  if (dataProvider instanceof SceneQueryRunner) {
+    return dataProvider;
   }
 
-  if (sceneObject.state.$data instanceof SceneDataTransformer) {
-    return getQueryRunnerFor(sceneObject.state.$data);
+  if (dataProvider instanceof SceneDataTransformer) {
+    return getQueryRunnerFor(dataProvider);
   }
 
   return undefined;
@@ -168,6 +197,7 @@ export function getQueryRunnerFor(sceneObject: SceneObject | undefined): SceneQu
 
 export function getDashboardSceneFor(sceneObject: SceneObject): DashboardScene {
   const root = sceneObject.getRoot();
+
   if (root instanceof DashboardScene) {
     return root;
   }
@@ -185,4 +215,49 @@ export function getClosestVizPanel(sceneObject: SceneObject): VizPanel | null {
   }
 
   return null;
+}
+
+export function isPanelClone(key: string) {
+  return key.includes('clone');
+}
+
+export function getDefaultVizPanel(dashboard: DashboardScene): VizPanel {
+  const panelId = dashboardSceneGraph.getNextPanelId(dashboard);
+
+  return new VizPanel({
+    title: 'Panel Title',
+    key: getVizPanelKeyForPanelId(panelId),
+    pluginId: 'timeseries',
+    titleItems: [new VizPanelLinks({ menu: new VizPanelLinksMenu({}) })],
+    hoverHeaderOffset: 0,
+    menu: new VizPanelMenu({
+      $behaviors: [panelMenuBehavior],
+    }),
+    $data: new SceneDataTransformer({
+      $data: new SceneQueryRunner({
+        queries: [{ refId: 'A' }],
+        datasource: getDataSourceRef(getDataSourceSrv().getInstanceSettings(null)!),
+        $behaviors: [new DashboardDatasourceBehaviour({})],
+      }),
+      transformations: [],
+    }),
+  });
+}
+
+export function getDefaultRow(dashboard: DashboardScene): SceneGridRow {
+  const id = dashboardSceneGraph.getNextPanelId(dashboard);
+
+  return new SceneGridRow({
+    key: getVizPanelKeyForPanelId(id),
+    title: 'Row title',
+    actions: new RowActions({}),
+    y: 0,
+  });
+}
+
+export function getLibraryPanel(vizPanel: VizPanel): LibraryVizPanel | undefined {
+  if (vizPanel.parent instanceof LibraryVizPanel) {
+    return vizPanel.parent;
+  }
+  return;
 }

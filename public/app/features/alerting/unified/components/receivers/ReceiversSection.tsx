@@ -4,8 +4,7 @@ import { Link } from 'react-router-dom';
 import { useToggle } from 'react-use';
 
 import { GrafanaTheme2 } from '@grafana/data';
-import { Stack } from '@grafana/experimental';
-import { Button, Dropdown, Icon, Menu, MenuItem, useStyles2 } from '@grafana/ui';
+import { Button, Dropdown, Icon, Menu, MenuItem, useStyles2, Stack } from '@grafana/ui';
 
 import { GrafanaReceiversExporter } from '../export/GrafanaReceiversExporter';
 
@@ -69,12 +68,12 @@ export const ReceiversSection = ({
 };
 
 const getStyles = (theme: GrafanaTheme2) => ({
-  heading: css`
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-  `,
-  description: css`
-    color: ${theme.colors.text.secondary};
-  `,
+  heading: css({
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+  }),
+  description: css({
+    color: theme.colors.text.secondary,
+  }),
 });

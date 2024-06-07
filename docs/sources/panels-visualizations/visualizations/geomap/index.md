@@ -21,7 +21,7 @@ aliases:
   - ../../panels/visualizations/geomap/osm/
   - ../../panels/visualizations/geomap/zyx/
   - ../../visualizations/geomap/
-description: Geomap visualization documentation
+description: Configure options for Grafana's geomap visualization
 keywords:
   - grafana
   - Geomap
@@ -34,6 +34,17 @@ labels:
     - oss
 title: Geomap
 weight: 100
+refs:
+  data-format-supported-by-the-node-graph-visualization:
+    - pattern: /docs/grafana/
+      destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/visualizations/node-graph/#data-api
+    - pattern: /docs/grafana-cloud/
+      destination: /docs/grafana-cloud/visualizations/panels-visualizations/visualizations/node-graph/#data-api
+  provisioning-docs-page:
+    - pattern: /docs/grafana/
+      destination: /docs/grafana/<GRAFANA_VERSION>/administration/provisioning/
+    - pattern: /docs/grafana-cloud/
+      destination: /docs/grafana/<GRAFANA_VERSION>/administration/provisioning/
 ---
 
 # Geomap
@@ -43,6 +54,18 @@ Geomaps allow you to view and customize the world map using geospatial data. You
 > We would love your feedback on geomaps. Please check out the [open Github issues](https://github.com/grafana/grafana/issues?page=1&q=is%3Aopen+is%3Aissue+label%3Aarea%2Fpanel%2Fgeomap) and [submit a new feature request](https://github.com/grafana/grafana/issues/new?assignees=&labels=type%2Ffeature-request,area%2Fpanel%2Fgeomap&title=Geomap:&projects=grafana-dataviz&template=1-feature_requests.md) as needed.
 
 {{< figure src="/static/img/docs/geomap-panel/geomap-example-8-1-0.png" max-width="1200px" caption="Geomap panel" >}}
+
+Pan the map, while it's in focus, by using the arrow keys. Zoom in and out by using the `+` and `-` keys.
+
+The following video provides beginner steps for creating geomap visualizations. You'll learn the data requirements and caveats, special customizations, preconfigured displays and much more:
+
+{{< youtube id="HwM8AFQ7EUs" >}}
+
+{{< docs/play title="Geomap Examples" url="https://play.grafana.org/d/panel-geomap/" >}}
+
+## Panel options
+
+{{< docs/shared lookup="visualizations/panel-options.md" source="grafana" version="<GRAFANA_VERSION>" >}}
 
 ## Map View
 
@@ -168,7 +191,7 @@ The default base layer uses the [CARTO](#carto-layer) map. You can define custom
 
 #### Configure the default base layer with provisioning
 
-You can configure the default base map using config files with Grafana’s provisioning system. For more information on all the settings, refer to the [provisioning docs page][].
+You can configure the default base map using config files with Grafana’s provisioning system. For more information on all the settings, refer to the [provisioning docs page](ref:provisioning-docs-page).
 
 Use the JSON configuration option `default_baselayer_config` to define the default base map. There are currently four base map options to choose from: `carto`, `esri-xyz`, `osm-standard`, `xyz`. Here are some provisioning examples for each base map option.
 
@@ -239,6 +262,8 @@ The markers layer allows you to display data points as different marker shapes s
 
 - **Size** configures the size of the markers. The default is `Fixed size`, which makes all marker sizes the same regardless of the data; however, there is also an option to size the markers based on data corresponding to a selected field. `Min` and `Max` marker sizes have to be set such that the markers can scale within this range.
 - **Symbol** allows you to choose the symbol, icon, or graphic to aid in providing additional visual context to your data. Choose from assets that are included with Grafana such as simple symbols or the Unicon library. You can also specify a URL containing an image asset. The image must be a scalable vector graphic (SVG).
+- **Symbol Vertical Align** configures the vertical alignment of the symbol relative to the data point. Note that the symbol's rotation angle is applied first around the data point, then the vertical alignment is applied relative to the rotation of the symbol.
+- **Symbol Horizontal Align** configures the horizontal alignment of the symbol relative to the data point. Note that the symbol's rotation angle is applied first around the data point, then the horizontal alignment is applied relative to the rotation of the symbol.
 - **Color** configures the color of the markers. The default `Fixed color` sets all markers to a specific color. There is also an option to have conditional colors depending on the selected field data point values and the color scheme set in the `Standard options` section.
 - **Fill opacity** configures the transparency of each marker.
 - **Rotation angle** configures the rotation angle of each marker. The default is `Fixed value`, which makes all markers rotate to the same angle regardless of the data; however, there is also an option to set the rotation of the markers based on data corresponding to a selected field.
@@ -279,6 +304,26 @@ The GeoJSON layer allows you to select and load a static GeoJSON file from the f
   - **Opacity** configures the transparency level for the current rule
 - **Add style rule** creates additional style rules.
 - **Display tooltip** allows you to toggle tooltips for the layer.
+
+{{% admonition type="note" %}}
+Styles can be set within the "properties" object of the GeoJSON with support for the following geometries:
+
+- Polygon, MultiPolygon
+
+  - **"fill"** - The color of the interior of the polygon(s)
+  - **"fill-opacity"** - The opacity of the interior of the polygon(s)
+  - **"stroke-width"** - The width of the line component of the polygon(s)
+
+- Point, MultiPoint
+
+  - **"marker-color"** - The color of the point(s)
+  - **"marker-size"** - The size of the point(s)
+
+- LineString, MultiLineString
+  - **"stroke"** - The color of the line(s)
+  - **"stroke-width"** - The width of the line(s)
+
+{{% /admonition %}}
 
 ## Night / Day layer
 
@@ -367,7 +412,7 @@ The Photos layer renders a photo at each data point.
 The Network layer is currently in [public preview](/docs/release-life-cycle/). Grafana Labs offers limited support, and breaking changes might occur prior to the feature being made generally available.
 {{% /admonition %}}
 
-The Network layer renders a network graph. This layer supports the same [data format supported by the node graph visualization][] with the addition of [geospatial data]({{< relref "#location">}}) included in the nodes data. The geospatial data is used to locate and render the nodes on the map.
+The Network layer renders a network graph. This layer supports the same [data format supported by the node graph visualization](ref:data-format-supported-by-the-node-graph-visualization) with the addition of [geospatial data]({{< relref "#location">}}) included in the nodes data. The geospatial data is used to locate and render the nodes on the map.
 
 {{< figure src="/media/docs/grafana/screenshot-grafana-10-1-geomap-network-layer-v2.png" max-width="750px" caption="Geomap network layer" >}}
 {{< video-embed src="/media/docs/grafana/screen-recording-10-1-geomap-network-layer-from-node-graph.mp4" max-width="750px" caption="Node graph to Geomap network layer" >}}
@@ -455,7 +500,7 @@ A map from a collaborative free geographic world database.
 
 ### More Information
 
-- [**About Open Street Map**](https://www.openstreetmap.org/about)\
+- [**About Open Street Map**](https://www.openstreetmap.org/about)
 
 ## ArcGIS layer
 
@@ -534,7 +579,7 @@ Displays measure tools in the upper right corner. Measurements appear only when 
 - **Double-click** to end measurement
 
 {{% admonition type="note" %}}
-<br /- When you change measurement type or units, the previous measurement is removed from the map. <br /- If the control is closed and then re-opened, the most recent measurement is displayed. <br /- A measurement can be modified by clicking and dragging on it.
+When you change measurement type or units, the previous measurement is removed from the map. If the control is closed and then re-opened, the most recent measurement is displayed. A measurement can be modified by clicking and dragging on it.
 {{% /admonition %}}
 
 #### Length
@@ -575,10 +620,22 @@ Displays debug information in the upper right corner. This can be useful for deb
 - **None** displays tooltips only when a data point is clicked.
 - **Details** displays tooltips when a mouse pointer hovers over a data point.
 
-{{% docs/reference %}}
-[provisioning docs page]: "/docs/grafana/ -> /docs/grafana/<GRAFANA VERSION>/administration/provisioning"
-[provisioning docs page]: "/docs/grafana-cloud/ -> /docs/grafana/<GRAFANA VERSION>/administration/provisioning"
+## Standard options
 
-[data format supported by the node graph visualization]: "/docs/grafana/ -> /docs/grafana/<GRAFANA VERSION>/panels-visualizations/visualizations/node-graph#data-api"
-[data format supported by the node graph visualization]: "/docs/grafana-cloud/ -> /docs/grafana/<GRAFANA VERSION>/panels-visualizations/visualizations/node-graph#data-api"
-{{% /docs/reference %}}
+{{< docs/shared lookup="visualizations/standard-options.md" source="grafana" version="<GRAFANA_VERSION>" >}}
+
+## Data links
+
+{{< docs/shared lookup="visualizations/datalink-options.md" source="grafana" version="<GRAFANA_VERSION>" >}}
+
+## Value mappings
+
+{{< docs/shared lookup="visualizations/value-mappings-options.md" source="grafana" version="<GRAFANA_VERSION>" >}}
+
+## Thresholds
+
+{{< docs/shared lookup="visualizations/thresholds-options-2.md" source="grafana" version="<GRAFANA_VERSION>" >}}
+
+## Field overrides
+
+{{< docs/shared lookup="visualizations/overrides-options.md" source="grafana" version="<GRAFANA_VERSION>" >}}

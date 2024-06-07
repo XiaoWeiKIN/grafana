@@ -3,12 +3,14 @@
   "name": "TestData",
   "id": "grafana-testdata-datasource",
   "aliasIDs": ["testdata"],
+  "executable": "gpx_testdata",
 
   "metrics": true,
   "logs": true,
   "alerting": true,
   "annotations": true,
   "backend": true,
+  "apiVersion": "v0alpha1",
 
   "queryOptions": {
     "minInterval": true,
@@ -24,7 +26,8 @@
     "logos": {
       "small": "img/testdata.svg",
       "large": "img/testdata.svg"
-    }
+    },
+    "version": "%VERSION%"
   },
 
   "includes": [
@@ -33,5 +36,9 @@
       "name": "Streaming Example",
       "path": "dashboards/streaming.json"
     }
-  ]
+  ],
+
+  "dependencies": {
+    "grafanaDependency": ">=10.3.0-0"
+  }
 }

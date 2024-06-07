@@ -16,7 +16,6 @@ jest.mock('app/core/core', () => {
   return {
     contextSrv: {
       hasPermission: () => true,
-      hasAccess: () => true,
       getValidIntervals: (defaultIntervals: string[]) => defaultIntervals,
     },
   };
@@ -26,7 +25,16 @@ jest.mock('react-virtualized-auto-sizer', () => {
   return {
     __esModule: true,
     default(props: ComponentProps<typeof AutoSizer>) {
-      return <div>{props.children({ width: 1000, height: 1000 })}</div>;
+      return (
+        <div>
+          {props.children({
+            width: 1000,
+            scaledWidth: 1000,
+            scaledHeight: 1000,
+            height: 1000,
+          })}
+        </div>
+      );
     },
   };
 });
@@ -34,6 +42,10 @@ jest.mock('react-virtualized-auto-sizer', () => {
 jest.mock('@grafana/runtime', () => ({
   ...jest.requireActual('@grafana/runtime'),
   getAppEvents: () => testEventBus,
+}));
+
+jest.mock('../hooks/useExplorePageTitle', () => ({
+  useExplorePageTitle: jest.fn(),
 }));
 
 describe('Handles open/close splits and related events in UI and URL', () => {

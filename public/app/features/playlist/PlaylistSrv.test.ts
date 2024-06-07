@@ -11,16 +11,17 @@ import { PlaylistSrv } from './PlaylistSrv';
 import { Playlist, PlaylistItem } from './types';
 
 jest.mock('./api', () => ({
-  playlistAPI: {
+  getPlaylistAPI: () => ({
     getPlaylist: jest.fn().mockReturnValue({
       interval: '1s',
       uid: 'xyz',
+      name: 'The display',
       items: [
         { type: 'dashboard_by_uid', value: 'aaa' },
         { type: 'dashboard_by_uid', value: 'bbb' },
       ],
     } as Playlist),
-  },
+  }),
   loadDashboards: (items: PlaylistItem[]) => {
     return Promise.resolve(
       items.map((v) => ({
@@ -123,7 +124,7 @@ describe('PlaylistSrv', () => {
 
     locationService.push('/datasources');
 
-    expect(srv.isPlaying).toBe(false);
+    expect(srv.state.isPlaying).toBe(false);
   });
 
   it('storeUpdated should not stop playlist when navigating to next dashboard', async () => {
@@ -136,6 +137,6 @@ describe('PlaylistSrv', () => {
 
     // eslint-disable-next-line
     expect((srv as any).validPlaylistUrl).toBe('/url/to/bbb');
-    expect(srv.isPlaying).toBe(true);
+    expect(srv.state.isPlaying).toBe(true);
   });
 });

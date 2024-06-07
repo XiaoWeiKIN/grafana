@@ -31,6 +31,7 @@ functions, e.g.
 - `errutil.Forbidden(messageID, opts...)`
 - `errutil.TooManyRequests(messageID, opts...)`
 - `errutil.NotImplemented(messageID, opts...)`
+- `errutil.ClientClosedRequest(messageID, opts...)`
 
 Above functions uses `errutil.NewBase(status, messageID, opts...)` under the covers, and that function should in general only be used outside the `errutil` package for `errutil.StatusUnknown`, e.g. when there are no accurate status code available/provided.
 
@@ -108,7 +109,7 @@ fully Go modules compatible, but can be viewed using
 ### Error source
 
 You can optionally specify an error source that describes from where an
-error originates. By default it's _server_ and means the error originates
+error originates. By default, it's _server_ and means the error originates
 from within the application, e.g. Grafana. The `errutil.WithDownstream()`
 option may be appended to the NewBase function call to denote an error
 originates from a _downstream_ server/service. The error source information

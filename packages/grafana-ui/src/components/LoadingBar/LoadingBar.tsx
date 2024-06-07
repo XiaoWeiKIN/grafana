@@ -20,7 +20,7 @@ const MAX_TRANSLATE_X = (100 / BAR_WIDTH) * 100;
 
 export function LoadingBar({ width, delay = DEFAULT_ANIMATION_DELAY, ariaLabel = 'Loading bar' }: LoadingBarProps) {
   const durationMs = Math.min(Math.max(Math.round(width * MILLISECONDS_PER_PIXEL), MIN_DURATION_MS), MAX_DURATION_MS);
-  const styles = useStyles2((theme) => getStyles(theme, delay, durationMs));
+  const styles = useStyles2(getStyles, delay, durationMs);
   const containerStyles: CSSProperties = {
     overflow: 'hidden',
   };
@@ -32,7 +32,7 @@ export function LoadingBar({ width, delay = DEFAULT_ANIMATION_DELAY, ariaLabel =
   );
 }
 
-const getStyles = (_theme: GrafanaTheme2, delay: number, duration: number) => {
+const getStyles = (theme: GrafanaTheme2, delay: number, duration: number) => {
   const animation = keyframes({
     '0%': {
       transform: 'translateX(-100%)',
@@ -49,13 +49,23 @@ const getStyles = (_theme: GrafanaTheme2, delay: number, duration: number) => {
       height: 1,
       background: 'linear-gradient(90deg, rgba(110, 159, 255, 0) 0%, #6E9FFF 80.75%, rgba(110, 159, 255, 0) 100%)',
       transform: 'translateX(-100%)',
-      animationName: animation,
-      // an initial delay to prevent the loader from showing if the response is faster than the delay
-      animationDelay: `${delay}ms`,
-      animationDuration: `${duration}ms`,
-      animationTimingFunction: 'linear',
-      animationIterationCount: 'infinite',
       willChange: 'transform',
+      [theme.transitions.handleMotion('no-preference')]: {
+        animationName: animation,
+        // an initial delay to prevent the loader from showing if the response is faster than the delay
+        animationDelay: `${delay}ms`,
+        animationTimingFunction: 'linear',
+        animationIterationCount: 'infinite',
+        animationDuration: `${duration}ms`,
+      },
+      [theme.transitions.handleMotion('reduce')]: {
+        animationName: animation,
+        // an initial delay to prevent the loader from showing if the response is faster than the delay
+        animationDelay: `${delay}ms`,
+        animationTimingFunction: 'linear',
+        animationIterationCount: 'infinite',
+        animationDuration: `${4 * duration}ms`,
+      },
     }),
   };
 };

@@ -1,4 +1,4 @@
-import { render, waitFor, screen, fireEvent, within, Matcher, getByRole } from '@testing-library/react';
+import { render, waitFor, screen, within, Matcher, getByRole } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { merge, uniqueId } from 'lodash';
 import React from 'react';
@@ -9,6 +9,7 @@ import { MockDataSourceApi } from 'test/mocks/datasource_srv';
 import { getGrafanaContextMock } from 'test/mocks/getGrafanaContextMock';
 
 import { DataSourcePluginMeta, SupportedTransformationType } from '@grafana/data';
+import { selectors } from '@grafana/e2e-selectors';
 import { BackendSrv, setDataSourceSrv, BackendSrvRequest, reportInteraction } from '@grafana/runtime';
 import { contextSrv } from 'app/core/services/context_srv';
 import { configureStore } from 'app/store/configureStore';
@@ -270,13 +271,13 @@ describe('CorrelationsPage', () => {
 
       // step 2:
       // set target datasource picker value
-      fireEvent.keyDown(screen.getByLabelText(/^target/i), { keyCode: 40 });
+      await userEvent.click(screen.getByLabelText(/^target/i));
       await userEvent.click(screen.getByText('prometheus'));
       await userEvent.click(await screen.findByRole('button', { name: /next$/i }));
 
       // step 3:
       // set source datasource picker value
-      fireEvent.keyDown(screen.getByLabelText(/^source/i), { keyCode: 40 });
+      await userEvent.click(screen.getByLabelText(/^source/i));
       await userEvent.click(screen.getByText('loki'));
       await userEvent.click(await screen.findByRole('button', { name: /add$/i }));
 
@@ -292,7 +293,9 @@ describe('CorrelationsPage', () => {
 
       await userEvent.click(await screen.findByRole('button', { name: /add$/i }));
 
-      expect(mocks.reportInteraction).toHaveBeenLastCalledWith('grafana_correlations_added');
+      await waitFor(() => {
+        expect(mocks.reportInteraction).toHaveBeenCalledWith('grafana_correlations_added');
+      });
 
       // the table showing correlations should have appeared
       expect(await screen.findByRole('table')).toBeInTheDocument();
@@ -425,21 +428,25 @@ describe('CorrelationsPage', () => {
 
       // step 2:
       // set target datasource picker value
-      fireEvent.keyDown(screen.getByLabelText(/^target/i), { keyCode: 40 });
+      await userEvent.click(screen.getByLabelText(/^target/i));
       await userEvent.click(screen.getByText('elastic'));
       await userEvent.click(await screen.findByRole('button', { name: /next$/i }));
 
       // step 3:
       // set source datasource picker value
-      fireEvent.keyDown(screen.getByLabelText(/^source/i), { keyCode: 40 });
-      await userEvent.click(within(screen.getByLabelText('Select options menu')).getByText('prometheus'));
+      await userEvent.click(screen.getByLabelText(/^source/i));
+      await userEvent.click(
+        within(screen.getByTestId(selectors.components.DataSourcePicker.dataSourceList)).getByText('prometheus')
+      );
 
       await userEvent.clear(screen.getByRole('textbox', { name: /results field/i }));
       await userEvent.type(screen.getByRole('textbox', { name: /results field/i }), 'Line');
 
       await userEvent.click(screen.getByRole('button', { name: /add$/i }));
 
-      expect(mocks.reportInteraction).toHaveBeenLastCalledWith('grafana_correlations_added');
+      await waitFor(() => {
+        expect(mocks.reportInteraction).toHaveBeenCalledWith('grafana_correlations_added');
+      });
 
       // the table showing correlations should have appeared
       expect(await screen.findByRole('table')).toBeInTheDocument();
@@ -474,7 +481,9 @@ describe('CorrelationsPage', () => {
 
       expect(screen.queryByRole('cell', { name: /some label$/i })).not.toBeInTheDocument();
 
-      expect(mocks.reportInteraction).toHaveBeenLastCalledWith('grafana_correlations_deleted');
+      await waitFor(() => {
+        expect(mocks.reportInteraction).toHaveBeenCalledWith('grafana_correlations_deleted');
+      });
     });
 
     it('correctly edits correlations', async () => {
@@ -486,7 +495,9 @@ describe('CorrelationsPage', () => {
       const rowExpanderButton = within(tableRows[0]).getByRole('button', { name: /toggle row expanded/i });
       await userEvent.click(rowExpanderButton);
 
-      expect(mocks.reportInteraction).toHaveBeenLastCalledWith('grafana_correlations_details_expanded');
+      await waitFor(() => {
+        expect(mocks.reportInteraction).toHaveBeenCalledWith('grafana_correlations_details_expanded');
+      });
 
       await userEvent.clear(screen.getByRole('textbox', { name: /label/i }));
       await userEvent.type(screen.getByRole('textbox', { name: /label/i }), 'edited label');
@@ -500,9 +511,11 @@ describe('CorrelationsPage', () => {
 
       await userEvent.click(screen.getByRole('button', { name: /save$/i }));
 
-      expect(await screen.findByRole('cell', { name: /edited label$/i })).toBeInTheDocument();
+      expect(await screen.findByRole('cell', { name: /edited label$/i }, { timeout: 5000 })).toBeInTheDocument();
 
-      expect(mocks.reportInteraction).toHaveBeenLastCalledWith('grafana_correlations_edited');
+      await waitFor(() => {
+        expect(mocks.reportInteraction).toHaveBeenCalledWith('grafana_correlations_edited');
+      });
     });
 
     it('correctly edits transformations', async () => {
@@ -528,7 +541,7 @@ describe('CorrelationsPage', () => {
 
       // select Regex, be sure expression field is not disabled and contains the former expression
       openMenu(typeFilterSelect[0]);
-      await userEvent.click(screen.getByText('Regular expression', { selector: 'span' }));
+      await userEvent.click(screen.getByText('Regular expression'));
       expressionInput = screen.queryByLabelText(/expression/i);
       expect(expressionInput).toBeInTheDocument();
       expect(expressionInput).toBeEnabled();
@@ -544,7 +557,8 @@ describe('CorrelationsPage', () => {
       await userEvent.click(screen.getByRole('button', { name: /add transformation/i }));
       typeFilterSelect = screen.getAllByLabelText('Type');
       openMenu(typeFilterSelect[0]);
-      await userEvent.click(screen.getByText('Regular expression'));
+      const menu = await screen.findByLabelText('Select options menu');
+      await userEvent.click(within(menu).getByText('Regular expression'));
       expressionInput = screen.queryByLabelText(/expression/i);
       expect(expressionInput).toBeInTheDocument();
       expect(expressionInput).toBeEnabled();
@@ -553,7 +567,9 @@ describe('CorrelationsPage', () => {
       expect(screen.getByText('Please define an expression')).toBeInTheDocument();
       await userEvent.type(screen.getByLabelText(/expression/i), 'test expression');
       await userEvent.click(screen.getByRole('button', { name: /save$/i }));
-      expect(mocks.reportInteraction).toHaveBeenLastCalledWith('grafana_correlations_edited');
+      await waitFor(() => {
+        expect(mocks.reportInteraction).toHaveBeenCalledWith('grafana_correlations_edited');
+      });
     });
   });
 
@@ -684,7 +700,9 @@ describe('CorrelationsPage', () => {
 
       await userEvent.click(rowExpanderButton);
 
-      expect(mocks.reportInteraction).toHaveBeenLastCalledWith('grafana_correlations_details_expanded');
+      await waitFor(() => {
+        expect(mocks.reportInteraction).toHaveBeenCalledWith('grafana_correlations_details_expanded');
+      });
 
       // form elements should be readonly
       const labelInput = await screen.findByRole('textbox', { name: /label/i });

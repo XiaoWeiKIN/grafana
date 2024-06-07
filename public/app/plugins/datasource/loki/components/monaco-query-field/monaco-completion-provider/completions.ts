@@ -309,7 +309,8 @@ export async function getAfterSelectorCompletions(
     query = trimEnd(logQuery, '| ');
   }
 
-  const { extractedLabelKeys, hasJSON, hasLogfmt, hasPack } = await dataProvider.getParserAndLabelKeys(query);
+  const { extractedLabelKeys, structuredMetadataKeys, hasJSON, hasLogfmt, hasPack } =
+    await dataProvider.getParserAndLabelKeys(query);
   const hasQueryParser = isQueryWithParser(query).queryWithParser;
 
   const prefix = `${hasSpace ? '' : ' '}${afterPipe ? '' : '| '}`;
@@ -325,6 +326,15 @@ export async function getAfterSelectorCompletions(
   const pipeOperations = getPipeOperationsCompletions(prefix);
 
   const completions = [...parserCompletions, ...pipeOperations];
+
+  structuredMetadataKeys.forEach((key) => {
+    completions.push({
+      type: 'LABEL_NAME',
+      label: `${key} (detected)`,
+      insertText: `${prefix}${key}`,
+      documentation: `"${key}" was suggested based on structured metadata attached to your loglines.`,
+    });
+  });
 
   // Let's show label options only if query has parser
   if (hasQueryParser) {
@@ -356,26 +366,43 @@ export async function getLogfmtCompletions(
   otherLabels: string[],
   dataProvider: CompletionDataProvider
 ): Promise<Completion[]> {
-  if (trailingComma) {
-    // The user is typing a new label, so we remove the last comma
-    logQuery = trimEnd(logQuery, ', ');
-  }
-
   let completions: Completion[] = [];
 
+  if (trailingComma) {
+    // Remove the trailing comma, otherwise the sample query will fail.
+    logQuery = trimEnd(logQuery, ', ');
+  }
   const { extractedLabelKeys, hasJSON, hasLogfmt, hasPack } = await dataProvider.getParserAndLabelKeys(logQuery);
   const pipeOperations = getPipeOperationsCompletions('| ');
 
-  // {label="value"} | logfmt ^
+  /**
+   * The user is not in the process of writing another label, and has not specified 2 flags.
+   * The current grammar doesn't allow us to know which flags were used (by node name), so we consider flags = true
+   * when 2 have been used.
+   * For example:
+   * - {label="value"} | logfmt ^
+   * - {label="value"} | logfmt --strict ^
+   * - {label="value"} | logfmt --strict --keep-empty ^
+   */
   if (!trailingComma && !flags) {
     completions = [...LOGFMT_ARGUMENT_COMPLETIONS];
   }
-  // {label="value"} | logfmt --flag ^
-  // {label="value"} | logfmt label, label2 ^
+
+  /**
+   * If the user has no trailing comma and has a trailing space it can mean that they finished writing the logfmt
+   * part and want to move on, for example, with other parsers or pipe operations.
+   * For example:
+   * - {label="value"} | logfmt --flag ^
+   * - {label="value"} | logfmt label, label2 ^
+   */
   if (!trailingComma && trailingSpace) {
     /**
-     * Don't offer parsers: {label="value"} | logfmt ^
-     * Offer parsers: {label="value"} | logfmt label ^
+     * Don't offer parsers if there is no label argument: {label="value"} | logfmt ^
+     * The reason is that it would be unusual that they would want to use another parser just after logfmt, and
+     * more likely that they would want a flag, labels, or continue with pipe operations.
+     *
+     * Offer parsers with at least one label argument: {label="value"} | logfmt label ^
+     * The rationale here is to offer the same completions as getAfterSelectorCompletions().
      */
     const parserCompletions =
       otherLabels.length > 0
@@ -387,6 +414,8 @@ export async function getLogfmtCompletions(
   const labels = extractedLabelKeys.filter((label) => !otherLabels.includes(label));
 
   /**
+   * We want to decide whether to use a trailing comma or not based on the data we have of the current
+   * situation. In particular, the following scenarios will not lead to a trailing comma:
    * {label="value"} | logfmt ^
    * - trailingSpace: true, trailingComma: false, otherLabels: []
    * {label="value"} | logfmt lab^

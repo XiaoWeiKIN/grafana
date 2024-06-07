@@ -1,12 +1,13 @@
 package util
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 
 	"cuelang.org/go/pkg/strings"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/teris-io/shortid"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -48,12 +49,25 @@ func TestRandomUIDs(t *testing.T) {
 			t.Fatalf("created invalid name: %v", validation)
 		}
 
-		_, err := uuid.Parse(v)
-		require.NoError(t, err)
-
-		//fmt.Println(v)
+		//	fmt.Println(v)
 	}
 	// t.FailNow()
+}
+
+func TestCaseInsensitiveCollisionsUIDs(t *testing.T) {
+	history := make(map[string]bool, 0)
+	for i := 0; i < 100000; i++ {
+		v := GenerateShortUID()
+		if false {
+			v, _ = shortid.Generate() // collides in less then 500 iterations
+		}
+
+		lower := strings.ToLower(v)
+		_, exists := history[lower]
+		require.False(t, exists, fmt.Sprintf("already found: %s (index:%d)", v, i))
+
+		history[lower] = true
+	}
 }
 
 func TestIsShortUIDTooLong(t *testing.T) {
@@ -126,6 +140,35 @@ func TestValidateUID(t *testing.T) {
 			} else {
 				require.ErrorIs(t, err, tt.expected)
 			}
+		})
+	}
+}
+
+func TestAutofixUID(t *testing.T) {
+	var tests = []struct {
+		name     string
+		uid      string
+		expected string
+	}{
+		{
+			name:     "return input when input is valid",
+			uid:      "f8cc010c-ee72-4681-89d2-d46e1bd47d33",
+			expected: "f8cc010c-ee72-4681-89d2-d46e1bd47d33",
+		},
+		{
+			name:     "generate new uid when input is too long",
+			uid:      strings.Repeat("1", MaxUIDLength+1),
+			expected: strings.Repeat("1", MaxUIDLength),
+		},
+		{
+			name:     "generate new uid when input has invalid characters",
+			uid:      "f8cc010c.ee72.4681;89d2+d46e1bd47d33",
+			expected: "f8cc010c-ee72-4681-89d2-d46e1bd47d33",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, AutofixUID(tt.uid))
 		})
 	}
 }

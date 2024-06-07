@@ -1,8 +1,15 @@
 import { xor } from 'lodash';
 import { ValidateResult } from 'react-hook-form';
 
-import { DataFrame, ThresholdsConfig, ThresholdsMode, isTimeSeriesFrames, PanelData } from '@grafana/data';
-import { GraphTresholdsStyleMode, LoadingState } from '@grafana/schema';
+import {
+  DataFrame,
+  isTimeSeriesFrames,
+  LoadingState,
+  PanelData,
+  ThresholdsConfig,
+  ThresholdsMode,
+} from '@grafana/data';
+import { GraphThresholdsStyleMode } from '@grafana/schema';
 import { config } from 'app/core/config';
 import { EvalFunction } from 'app/features/alerting/state/alertDef';
 import { isExpressionQuery } from 'app/features/expressions/guards';
@@ -129,7 +136,7 @@ export function warningFromSeries(series: DataFrame[]): Error | undefined {
 
 export type ThresholdDefinition = {
   config: ThresholdsConfig;
-  mode: GraphTresholdsStyleMode;
+  mode: GraphThresholdsStyleMode;
 };
 
 export type ThresholdDefinitions = Record<string, ThresholdDefinition>;
@@ -137,9 +144,13 @@ export type ThresholdDefinitions = Record<string, ThresholdDefinition>;
 /**
  * This function will retrieve threshold definitions for the given array of data and expression queries.
  */
-export function getThresholdsForQueries(queries: AlertQuery[]) {
+export function getThresholdsForQueries(queries: AlertQuery[], condition: string | null) {
   const thresholds: ThresholdDefinitions = {};
   const SUPPORTED_EXPRESSION_TYPES = [ExpressionQueryType.threshold, ExpressionQueryType.classic];
+
+  if (!condition) {
+    return thresholds;
+  }
 
   for (const query of queries) {
     if (!isExpressionQuery(query.model)) {
@@ -152,6 +163,10 @@ export function getThresholdsForQueries(queries: AlertQuery[]) {
     }
 
     if (!Array.isArray(query.model.conditions)) {
+      continue;
+    }
+
+    if (query.model.refId !== condition) {
       continue;
     }
 
@@ -195,7 +210,7 @@ export function getThresholdsForQueries(queries: AlertQuery[]) {
                 mode: ThresholdsMode.Absolute,
                 steps: [],
               },
-              mode: GraphTresholdsStyleMode.Line,
+              mode: GraphThresholdsStyleMode.Line,
             };
           }
 
@@ -203,7 +218,7 @@ export function getThresholdsForQueries(queries: AlertQuery[]) {
             appendSingleThreshold(originRefID, threshold[0]);
           } else if (originRefID && hasValidOrigin && isRangeThreshold) {
             appendRangeThreshold(originRefID, threshold, condition.evaluator.type);
-            thresholds[originRefID].mode = GraphTresholdsStyleMode.LineAndArea;
+            thresholds[originRefID].mode = GraphThresholdsStyleMode.LineAndArea;
           }
         });
       } catch (err) {

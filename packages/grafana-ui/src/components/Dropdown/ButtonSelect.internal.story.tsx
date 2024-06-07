@@ -1,5 +1,5 @@
 import { action } from '@storybook/addon-actions';
-import { useArgs } from '@storybook/client-api';
+import { useArgs } from '@storybook/preview-api';
 import { Meta, StoryFn } from '@storybook/react';
 import React from 'react';
 
@@ -27,6 +27,7 @@ export const Basic: StoryFn<typeof ButtonSelect> = (args) => {
   return (
     <div style={{ marginLeft: '100px', position: 'relative', display: 'inline-block' }}>
       <ButtonSelect
+        variant="canvas"
         {...args}
         onChange={(value) => {
           action('onChange fired')(value);

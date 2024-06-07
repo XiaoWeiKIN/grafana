@@ -1,10 +1,11 @@
-import { PluginMeta, patchArrayVectorProrotypeMethods } from '@grafana/data';
+import { PluginType, patchArrayVectorProrotypeMethods } from '@grafana/data';
+import { config } from '@grafana/runtime';
 
 import { transformPluginSourceForCDN } from '../cdn/utils';
 import { resolveWithCache } from '../loader/cache';
-import { isHostedOnCDN } from '../loader/utils';
+import { isHostedOnCDN, resolveModulePath } from '../loader/utils';
 
-import { SandboxEnvironment } from './types';
+import { SandboxEnvironment, SandboxPluginMeta } from './types';
 
 function isSameDomainAsHost(url: string): boolean {
   const locationUrl = new URL(window.location.href);
@@ -12,15 +13,20 @@ function isSameDomainAsHost(url: string): boolean {
   return locationUrl.host === paramUrl.host;
 }
 
-export async function loadScriptIntoSandbox(url: string, meta: PluginMeta, sandboxEnv: SandboxEnvironment) {
+export async function loadScriptIntoSandbox(url: string, sandboxEnv: SandboxEnvironment) {
   let scriptCode = '';
 
   // same-domain
   if (isSameDomainAsHost(url)) {
     const response = await fetch(url);
     scriptCode = await response.text();
-    scriptCode = patchPluginSourceMap(meta, scriptCode);
-
+    //even though this is not loaded via a CDN we need to transform the sourceMapUrl
+    scriptCode = transformPluginSourceForCDN({
+      url,
+      source: scriptCode,
+      transformSourceMapURL: true,
+      transformAssets: false,
+    });
     // cdn loaded
   } else if (isHostedOnCDN(url)) {
     const response = await fetch(url);
@@ -29,6 +35,7 @@ export async function loadScriptIntoSandbox(url: string, meta: PluginMeta, sandb
       url,
       source: scriptCode,
       transformSourceMapURL: true,
+      transformAssets: true,
     });
   }
 
@@ -36,10 +43,11 @@ export async function loadScriptIntoSandbox(url: string, meta: PluginMeta, sandb
     throw new Error('Only same domain scripts are allowed in sandboxed plugins');
   }
 
+  scriptCode = patchPluginAPIs(scriptCode);
   sandboxEnv.evaluate(scriptCode);
 }
 
-export async function getPluginCode(meta: PluginMeta): Promise<string> {
+export async function getPluginCode(meta: SandboxPluginMeta): Promise<string> {
   if (isHostedOnCDN(meta.module)) {
     // Load plugin from CDN, no need for "resolveWithCache" as CDN URLs already include the version
     const url = meta.module;
@@ -49,15 +57,22 @@ export async function getPluginCode(meta: PluginMeta): Promise<string> {
       url,
       source: pluginCode,
       transformSourceMapURL: true,
+      transformAssets: true,
     });
     return pluginCode;
   } else {
-    // local plugin. resolveWithCache will append a query parameter with its version
-    // to ensure correct cached version is served
-    const pluginCodeUrl = resolveWithCache(meta.module);
+    let modulePath = resolveModulePath(meta.module);
+    // resolveWithCache will append a query parameter with its version
+    // to ensure correct cached version is served for local plugins
+    const pluginCodeUrl = resolveWithCache(modulePath);
     const response = await fetch(pluginCodeUrl);
     let pluginCode = await response.text();
-    pluginCode = patchPluginSourceMap(meta, pluginCode);
+    pluginCode = transformPluginSourceForCDN({
+      url: pluginCodeUrl,
+      source: pluginCode,
+      transformSourceMapURL: true,
+      transformAssets: false,
+    });
     pluginCode = patchPluginAPIs(pluginCode);
     return pluginCode;
   }
@@ -67,35 +82,40 @@ function patchPluginAPIs(pluginCode: string): string {
   return pluginCode.replace(/window\.location/gi, 'window.locationSandbox');
 }
 
-/**
- * Patches the plugin's module.js source code references to sourcemaps to include the full url
- * of the module.js file instead of the regular relative reference.
- *
- * Because the plugin module.js code is loaded via fetch and then "eval" as a string
- * it can't find the references to the module.js.map directly and we need to patch it
- * to point to the correct location
- */
-function patchPluginSourceMap(meta: PluginMeta, pluginCode: string): string {
-  // skips inlined and files without source maps
-  if (pluginCode.includes('//# sourceMappingURL=module.js.map')) {
-    let replaceWith = '';
-    // make sure we don't add the sourceURL twice
-    if (!pluginCode.includes('//# sourceURL') || !pluginCode.includes('//@ sourceUrl')) {
-      replaceWith += `//# sourceURL=module.js\n`;
-    }
-    // modify the source map url to point to the correct location
-    const sourceCodeMapUrl = meta.module + '.map';
-    replaceWith += `//# sourceMappingURL=${sourceCodeMapUrl}`;
-
-    return pluginCode.replace('//# sourceMappingURL=module.js.map', replaceWith);
-  }
-  return pluginCode;
-}
-
 export function patchSandboxEnvironmentPrototype(sandboxEnvironment: SandboxEnvironment) {
   // same as https://github.com/grafana/grafana/blob/main/packages/grafana-data/src/types/vector.ts#L16
   // Array is a "reflective" type in Near-membrane and doesn't get an identify continuity
   sandboxEnvironment.evaluate(
     `${patchArrayVectorProrotypeMethods.toString()};${patchArrayVectorProrotypeMethods.name}()`
   );
+}
+
+export function getPluginLoadData(pluginId: string): SandboxPluginMeta {
+  // find it in datasources
+  for (const datasource of Object.values(config.datasources)) {
+    if (datasource.type === pluginId) {
+      return datasource.meta;
+    }
+  }
+
+  //find it in panels
+  for (const panel of Object.values(config.panels)) {
+    if (panel.id === pluginId) {
+      return panel;
+    }
+  }
+
+  //find it in apps
+  //the information inside the apps object is more limited
+  for (const app of Object.values(config.apps)) {
+    if (app.id === pluginId) {
+      return {
+        id: pluginId,
+        type: PluginType.app,
+        module: app.path,
+      };
+    }
+  }
+
+  throw new Error(`Could not find plugin ${pluginId}`);
 }

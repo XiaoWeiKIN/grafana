@@ -14,9 +14,10 @@ import {
   LogsSortOrder,
   dateTime,
   TimeRange,
+  LoadingState,
 } from '@grafana/data';
 import { config, reportInteraction } from '@grafana/runtime';
-import { DataQuery, LoadingState, TimeZone } from '@grafana/schema';
+import { DataQuery, TimeZone } from '@grafana/schema';
 import { Button, Modal, useTheme2 } from '@grafana/ui';
 import store from 'app/core/store';
 import { SETTINGS_KEYS } from 'app/features/explore/Logs/utils/logs';
@@ -25,11 +26,10 @@ import { useDispatch } from 'app/types';
 
 import { dataFrameToLogsModel } from '../../logsModel';
 import { sortLogRows } from '../../utils';
+import { LoadingIndicator } from '../LoadingIndicator';
 import { LogRows } from '../LogRows';
 
-import { LoadingIndicator } from './LoadingIndicator';
 import { LogContextButtons } from './LogContextButtons';
-import { Place } from './types';
 
 const getStyles = (theme: GrafanaTheme2) => {
   return {
@@ -128,7 +128,11 @@ interface LogRowContextModalProps {
   onClose: () => void;
   getRowContext: (row: LogRowModel, options: LogRowContextOptions) => Promise<DataQueryResponse>;
 
-  getRowContextQuery?: (row: LogRowModel, options?: LogRowContextOptions) => Promise<DataQuery | null>;
+  getRowContextQuery?: (
+    row: LogRowModel,
+    options?: LogRowContextOptions,
+    cacheFilters?: boolean
+  ) => Promise<DataQuery | null>;
   logsSortOrder: LogsSortOrder;
   runContextQuery?: () => void;
   getLogRowContextUi?: DataSourceWithLogsContextSupport['getLogRowContextUi'];
@@ -138,6 +142,7 @@ type Section = {
   loadingState: LoadingState;
   rows: LogRowModel[];
 };
+type Place = 'above' | 'below';
 type Context = Record<Place, Section>;
 
 const makeEmptyContext = (): Context => ({
@@ -358,7 +363,10 @@ export const LogRowContextModal: React.FunctionComponent<LogRowContextModalProps
       // this way this array of rows will never be empty
       const allRows = [...above.rows, row, ...below.rows];
 
-      const newRows = await loadMore(place, allRows);
+      const newRows = (await loadMore(place, allRows)).map((r) =>
+        // apply the original row's searchWords to all the rows for highlighting
+        !r.searchWords || !r.searchWords?.length ? { ...r, searchWords: row.searchWords } : r
+      );
       const [older, newer] = partition(newRows, (newRow) => newRow.timeEpochNs > row.timeEpochNs);
       const newAbove = logsSortOrder === LogsSortOrder.Ascending ? newer : older;
       const newBelow = logsSortOrder === LogsSortOrder.Ascending ? older : newer;
@@ -510,7 +518,7 @@ export const LogRowContextModal: React.FunctionComponent<LogRowContextModalProps
               <td className={styles.loadingCell}>
                 {loadingStateAbove !== LoadingState.Done && loadingStateAbove !== LoadingState.Error && (
                   <div ref={aboveLoadingElement}>
-                    <LoadingIndicator place="above" />
+                    <LoadingIndicator adjective="newer" />
                   </div>
                 )}
                 {loadingStateAbove === LoadingState.Error && <div>Error loading log more logs.</div>}
@@ -579,7 +587,7 @@ export const LogRowContextModal: React.FunctionComponent<LogRowContextModalProps
               <td className={styles.loadingCell}>
                 {loadingStateBelow !== LoadingState.Done && loadingStateBelow !== LoadingState.Error && (
                   <div ref={belowLoadingElement}>
-                    <LoadingIndicator place="below" />
+                    <LoadingIndicator adjective="older" />
                   </div>
                 )}
                 {loadingStateBelow === LoadingState.Error && <div>Error loading log more logs.</div>}

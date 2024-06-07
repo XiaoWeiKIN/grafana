@@ -15,7 +15,7 @@ const NewMessageTemplate = ({ match }: Props) => {
 
   const name = match?.params.name;
   if (!name) {
-    return <EntityNotFound entity="Message template" />;
+    return <EntityNotFound entity="Notification template" />;
   }
 
   if (isLoading && !data) {
@@ -31,7 +31,13 @@ const NewMessageTemplate = ({ match }: Props) => {
     return null;
   }
 
-  return <DuplicateTemplateView alertManagerSourceName={selectedAlertmanager!} config={data} templateName={name} />;
+  return (
+    <DuplicateTemplateView
+      alertManagerSourceName={selectedAlertmanager!}
+      config={data}
+      templateName={decodeURIComponent(name)}
+    />
+  );
 };
 
 export default NewMessageTemplate;

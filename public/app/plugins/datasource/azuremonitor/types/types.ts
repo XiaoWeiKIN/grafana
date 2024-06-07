@@ -1,4 +1,4 @@
-import { ScalarParameter, TabularParameter, Function } from '@kusto/monaco-kusto';
+import { ScalarParameter, TabularParameter, Function, EntityGroup } from '@kusto/monaco-kusto';
 
 import {
   DataSourceInstanceSettings,
@@ -33,7 +33,7 @@ export enum AzureCloud {
   None = '',
 }
 
-export type AzureAuthType = 'msi' | 'clientsecret' | 'workloadidentity';
+export type AzureAuthType = 'msi' | 'clientsecret' | 'workloadidentity' | 'currentuser';
 
 export type ConcealedSecret = symbol;
 
@@ -56,8 +56,17 @@ export interface AzureClientSecretCredentials extends AzureCredentialsBase {
   clientId?: string;
   clientSecret?: string | ConcealedSecret;
 }
+export interface AadCurrentUserCredentials extends AzureCredentialsBase {
+  authType: 'currentuser';
+  serviceCredentials?:
+    | AzureClientSecretCredentials
+    | AzureManagedIdentityCredentials
+    | AzureWorkloadIdentityCredentials;
+  serviceCredentialsEnabled?: boolean;
+}
 
 export type AzureCredentials =
+  | AadCurrentUserCredentials
   | AzureManagedIdentityCredentials
   | AzureClientSecretCredentials
   | AzureWorkloadIdentityCredentials;
@@ -70,6 +79,9 @@ export interface AzureDataSourceJsonData extends DataSourceJsonData {
   tenantId?: string;
   clientId?: string;
   subscriptionId?: string;
+  oauthPassThru?: boolean;
+  azureCredentials?: AzureCredentials;
+  basicLogsEnabled?: boolean;
 
   // logs
   /** @deprecated Azure Logs credentials */
@@ -167,6 +179,7 @@ export interface Database {
   functions: Function[];
   majorVersion: number;
   minorVersion: number;
+  entityGroups: EntityGroup[];
 }
 
 export interface FormatAsFieldProps extends AzureQueryEditorFieldProps {
@@ -420,3 +433,41 @@ interface MetricMetadataValue {
   name: AzureMonitorLocalizedValue;
   value: string;
 }
+
+export type Category = {
+  displayName: string;
+  id: string;
+  related: {
+    queries: string[];
+    tables: string[];
+  };
+};
+
+export type CheatsheetQuery = {
+  body: string;
+  description: string;
+  displayName: string;
+  id: string;
+  properties: {
+    ExampleQuery: boolean;
+    QueryAttributes: {
+      isMultiResource: boolean;
+    };
+  };
+  related: {
+    categories: string[];
+    resourceTypes: string[];
+    tables: string[];
+  };
+  tags: {
+    Topic: string[];
+  };
+};
+
+export type CheatsheetQueries = {
+  [key: string]: CheatsheetQuery[];
+};
+
+export type DropdownCategories = {
+  [key: string]: boolean;
+};

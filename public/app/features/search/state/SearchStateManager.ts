@@ -25,6 +25,7 @@ export const initialState: SearchState = {
   sort: undefined,
   prevSort: undefined,
   eventTrackingNamespace: 'dashboard_search',
+  deleted: false,
 };
 
 export const defaultQueryParams: SearchQueryParams = {
@@ -35,6 +36,14 @@ export const defaultQueryParams: SearchQueryParams = {
   layout: null,
 };
 
+const getLocalStorageLayout = () => {
+  const selectedLayout = localStorage.getItem(SEARCH_SELECTED_LAYOUT);
+  if (selectedLayout === SearchLayout.List) {
+    return SearchLayout.List;
+  } else {
+    return SearchLayout.Folders;
+  }
+};
 export class SearchStateManager extends StateManagerBase<SearchState> {
   updateLocation = debounce((query) => locationService.partial(query, true), 300);
   doSearchWithDebounce = debounce(() => this.doSearch(), 300);
@@ -50,14 +59,22 @@ export class SearchStateManager extends StateManagerBase<SearchState> {
       stateFromUrl.layout = SearchLayout.List;
     }
 
-    stateManager.setState({
+    const layout = getLocalStorageLayout();
+    const prevSort = localStorage.getItem(SEARCH_SELECTED_SORT) ?? undefined;
+    const sort = layout === SearchLayout.List ? stateFromUrl.sort || prevSort : null;
+
+    this.setState({
       ...initialState,
       ...stateFromUrl,
+      layout,
+      sort: sort ?? initialState.sort,
+      prevSort,
       folderUid: folderUid,
       eventTrackingNamespace: folderUid ? 'manage_dashboards' : 'dashboard_search',
+      deleted: this.state.deleted,
     });
 
-    if (doInitialSearch) {
+    if (doInitialSearch && this.hasSearchFilters()) {
       this.doSearch();
     }
   }
@@ -81,8 +98,11 @@ export class SearchStateManager extends StateManagerBase<SearchState> {
       sort: this.state.sort,
     });
 
-    // issue new search query
-    this.doSearchWithDebounce();
+    // Prevent searching when user is only clearing the input.
+    // We don't show these results anyway
+    if (this.hasSearchFilters()) {
+      this.doSearchWithDebounce();
+    }
   }
 
   onCloseSearch = () => {
@@ -171,7 +191,15 @@ export class SearchStateManager extends StateManagerBase<SearchState> {
   };
 
   hasSearchFilters() {
-    return this.state.query || this.state.tag.length || this.state.starred || this.state.panel_type || this.state.sort;
+    return (
+      this.state.query ||
+      this.state.tag.length ||
+      this.state.starred ||
+      this.state.panel_type ||
+      this.state.sort ||
+      this.state.deleted ||
+      this.state.layout === SearchLayout.List
+    );
   }
 
   getSearchQuery() {
@@ -185,6 +213,7 @@ export class SearchStateManager extends StateManagerBase<SearchState> {
       explain: this.state.explain,
       withAllowedActions: this.state.explain, // allowedActions are currently not used for anything on the UI and added only in `explain` mode
       starred: this.state.starred,
+      deleted: this.state.deleted,
     };
 
     // Only dashboards have additional properties
@@ -218,6 +247,7 @@ export class SearchStateManager extends StateManagerBase<SearchState> {
       query: this.state.query,
       tagCount: this.state.tag?.length,
       includePanels: this.state.includePanels,
+      deleted: this.state.deleted,
     };
 
     reportSearchQueryInteraction(this.state.eventTrackingNamespace, trackingInfo);
@@ -269,6 +299,7 @@ export class SearchStateManager extends StateManagerBase<SearchState> {
       query: this.state.query,
       tagCount: this.state.tag?.length,
       includePanels: this.state.includePanels,
+      deleted: this.state.deleted,
     });
   };
 
@@ -283,6 +314,7 @@ export class SearchStateManager extends StateManagerBase<SearchState> {
       query: this.state.query,
       tagCount: this.state.tag?.length,
       includePanels: this.state.includePanels,
+      deleted: this.state.deleted,
     });
   };
 }

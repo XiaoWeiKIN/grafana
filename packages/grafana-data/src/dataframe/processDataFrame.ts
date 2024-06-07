@@ -23,6 +23,7 @@ import {
   PanelData,
   LoadingState,
   GraphSeriesValue,
+  DataFrameWithValue,
 } from '../types/index';
 
 import { arrayToDataFrame } from './ArrayDataFrame';
@@ -32,10 +33,11 @@ function convertTableToDataFrame(table: TableData): DataFrame {
   const fields = table.columns.map((c) => {
     // TODO: should be Column but type does not exists there so not sure whats up here.
     const { text, type, ...disp } = c as any;
+    const values: unknown[] = [];
     return {
       name: text?.length ? text : c, // rename 'text' to the 'name' field
       config: (disp || {}) as FieldConfig,
-      values: [] as unknown[],
+      values,
       type: type && Object.values(FieldType).includes(type as FieldType) ? (type as FieldType) : FieldType.other,
     };
   });
@@ -147,7 +149,7 @@ function convertGraphSeriesToDataFrame(graphSeries: GraphSeriesXY): DataFrame {
 }
 
 function convertJSONDocumentDataToDataFrame(timeSeries: TimeSeries): DataFrame {
-  const fields = [
+  const fields: Field[] = [
     {
       name: timeSeries.target,
       type: FieldType.other,
@@ -156,7 +158,7 @@ function convertJSONDocumentDataToDataFrame(timeSeries: TimeSeries): DataFrame {
         unit: timeSeries.unit,
         filterable: (timeSeries as any).filterable,
       },
-      values: [] as TimeSeriesValue[][],
+      values: [],
     },
   ];
 
@@ -303,6 +305,9 @@ export const isTableData = (data: unknown): data is DataFrame => Boolean(data &&
 
 export const isDataFrame = (data: unknown): data is DataFrame => Boolean(data && data.hasOwnProperty('fields'));
 
+export const isDataFrameWithValue = (data: unknown): data is DataFrameWithValue =>
+  Boolean(isDataFrame(data) && data.hasOwnProperty('value'));
+
 /**
  * Inspect any object and return the results as a DataFrame
  */
@@ -310,11 +315,11 @@ export function toDataFrame(data: any): DataFrame {
   if ('fields' in data) {
     // DataFrameDTO does not have length
     if ('length' in data && data.fields[0]?.values?.get) {
-      return data as DataFrame;
+      return data;
     }
 
     // This will convert the array values into Vectors
-    return createDataFrame(data as DataFrameDTO);
+    return createDataFrame(data);
   }
 
   // Handle legacy docs/json type

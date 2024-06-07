@@ -1,7 +1,12 @@
-import { DashboardModel, PanelModel } from '../../state';
-import { Diffs, jsonDiff } from '../VersionHistory/utils';
+import { pick } from 'lodash';
 
-import { openai } from './llms';
+import { llms } from '@grafana/experimental';
+import { config } from '@grafana/runtime';
+import { Panel } from '@grafana/schema';
+
+import { DashboardModel, PanelModel } from '../../state';
+
+import { getDashboardStringDiff } from './jsonDiffText';
 
 export enum Role {
   // System content cannot be overwritten by user prompts.
@@ -11,7 +16,7 @@ export enum Role {
   'user' = 'user',
 }
 
-export type Message = openai.Message;
+export type Message = llms.openai.Message;
 
 export enum QuickFeedbackType {
   Shorter = 'Even shorter',
@@ -22,7 +27,9 @@ export enum QuickFeedbackType {
 /**
  * The OpenAI model to be used.
  */
-export const OPEN_AI_MODEL = 'gpt-4';
+export const DEFAULT_OAI_MODEL = 'gpt-4';
+
+export type OAI_MODEL = 'gpt-4' | 'gpt-4-32k' | 'gpt-3.5-turbo' | 'gpt-3.5-turbo-16k';
 
 /**
  * Sanitize the reply from OpenAI by removing the leading and trailing quotes.
@@ -41,29 +48,62 @@ export const sanitizeReply = (reply: string) => {
  * @returns user changes and migration changes
  */
 export function getDashboardChanges(dashboard: DashboardModel): {
-  userChanges: Diffs;
-  migrationChanges: Diffs;
+  userChanges: string;
+  migrationChanges: string;
 } {
-  // Re-parse the dashboard to remove functions and other non-serializable properties
-  const currentDashboard = JSON.parse(JSON.stringify(dashboard.getSaveModelClone()));
-  const originalDashboard = dashboard.getOriginalDashboard()!;
-  const dashboardAfterMigration = JSON.parse(JSON.stringify(new DashboardModel(originalDashboard).getSaveModelClone()));
+  const { migrationDiff, userDiff } = getDashboardStringDiff(dashboard);
 
   return {
-    userChanges: jsonDiff(dashboardAfterMigration, currentDashboard),
-    migrationChanges: jsonDiff(originalDashboard, dashboardAfterMigration),
+    userChanges: userDiff,
+    migrationChanges: migrationDiff,
   };
 }
 
+// Shared healthcheck promise so avoid multiple calls llm app settings and health check APIs
+let llmHealthCheck: Promise<boolean> | undefined;
+
 /**
- * Check if the LLM plugin is enabled and configured.
- * @returns true if the LLM plugin is enabled and configured.
+ * Check if the LLM plugin is enabled.
+ * @returns true if the LLM plugin is enabled.
  */
-export async function isLLMPluginEnabled() {
-  // Check if the LLM plugin is enabled and configured.
+export async function isLLMPluginEnabled(): Promise<boolean> {
+  if (!config.apps['grafana-llm-app']) {
+    return false;
+  }
+
+  if (llmHealthCheck) {
+    return llmHealthCheck;
+  }
+
+  // Check if the LLM plugin is enabled.
   // If not, we won't be able to make requests, so return early.
-  return await openai.enabled();
+  llmHealthCheck = new Promise((resolve) => {
+    llms.openai.health().then((response) => {
+      if (!response.ok) {
+        // Health check fail clear cached promise so we can try again later
+        llmHealthCheck = undefined;
+      }
+      resolve(response.ok);
+    });
+  });
+
+  return llmHealthCheck;
 }
+
+/**
+ * Get the message to be sent to OpenAI to generate a new response.
+ * @param previousResponse
+ * @param feedback
+ * @returns Message[] to be sent to OpenAI to generate a new response
+ */
+export const getFeedbackMessage = (previousResponse: string, feedback: string | QuickFeedbackType): Message[] => {
+  return [
+    {
+      role: Role.system,
+      content: `Your previous response was: ${previousResponse}. The user has provided the following feedback: ${feedback}. Re-generate your response according to the provided feedback.`,
+    },
+  ];
+};
 
 /**
  *
@@ -71,11 +111,9 @@ export async function isLLMPluginEnabled() {
  * @returns String for inclusion in prompts stating what the dashboard's panels are
  */
 export function getDashboardPanelPrompt(dashboard: DashboardModel): string {
-  const getPanelString = (panel: PanelModel, idx: number) => `
-  - Panel ${idx}\n
-  - Title: ${panel.title}\n
-  ${panel.description ? `- Description: ${panel.description}` : ''}
-  `;
+  const getPanelString = (panel: PanelModel, idx: number) =>
+    `- Panel ${idx}
+- Title: ${panel.title}${panel.description ? `\n- Description: ${panel.description}` : ''}`;
 
   const panelStrings: string[] = dashboard.panels.map(getPanelString);
   let panelPrompt: string;
@@ -105,4 +143,18 @@ export function getDashboardPanelPrompt(dashboard: DashboardModel): string {
   // Additionally, context windows that are too long degrade performance,
   // So it is possibly that if we can condense it further it would be better
   return panelPrompt;
+}
+
+export function getFilteredPanelString(panel: Panel): string {
+  const keysToKeep: Array<keyof Panel> = ['datasource', 'title', 'description', 'targets', 'type'];
+
+  const filteredPanel: Partial<Panel> = {
+    ...pick(panel, keysToKeep),
+    options: pick(panel.options, [
+      // For text panels, the content property helps generate the panel metadata
+      'content',
+    ]),
+  };
+
+  return JSON.stringify(filteredPanel, null, 2);
 }

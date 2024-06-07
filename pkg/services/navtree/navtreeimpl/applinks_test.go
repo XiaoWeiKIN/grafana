@@ -360,18 +360,20 @@ func TestAddAppLinks(t *testing.T) {
 func TestReadingNavigationSettings(t *testing.T) {
 	t.Run("Should include defaults", func(t *testing.T) {
 		service := ServiceImpl{
-			cfg: setting.NewCfg(),
+			cfg:      setting.NewCfg(),
+			features: featuremgmt.WithFeatures(),
 		}
 
 		_, _ = service.cfg.Raw.NewSection("navigation.app_sections")
 		service.readNavigationSettings()
 
-		require.Equal(t, "monitoring", service.navigationAppConfig["grafana-k8s-app"].SectionID)
+		require.Equal(t, "infrastructure", service.navigationAppConfig["grafana-k8s-app"].SectionID)
 	})
 
 	t.Run("Can add additional overrides via ini system", func(t *testing.T) {
 		service := ServiceImpl{
-			cfg: setting.NewCfg(),
+			cfg:      setting.NewCfg(),
+			features: featuremgmt.WithFeatures(),
 		}
 
 		appSections, _ := service.cfg.Raw.NewSection("navigation.app_sections")
@@ -432,7 +434,7 @@ func TestAddAppLinksAccessControl(t *testing.T) {
 	service := ServiceImpl{
 		log:            log.New("navtree"),
 		cfg:            cfg,
-		accessControl:  acimpl.ProvideAccessControl(cfg),
+		accessControl:  acimpl.ProvideAccessControl(featuremgmt.WithFeatures()),
 		pluginSettings: &pluginSettings,
 		features:       featuremgmt.WithFeatures(),
 		pluginStore: &pluginstore.FakePluginStore{

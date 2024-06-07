@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	contextmodel "github.com/grafana/grafana/pkg/services/contexthandler/model"
 	"github.com/grafana/grafana/pkg/services/datasources"
 	"github.com/grafana/grafana/pkg/services/datasources/guardian"
+	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginstore"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/web"
@@ -94,6 +96,7 @@ func TestAddDataSource_InvalidURL(t *testing.T) {
 			Access: "direct",
 			Type:   "test",
 		})
+		c.SignedInUser = authedUserWithPermissions(1, 1, []ac.Permission{})
 		return hs.AddDataSource(c)
 	}))
 
@@ -112,7 +115,7 @@ func TestAddDataSource_URLWithoutProtocol(t *testing.T) {
 			expectedDatasource: &datasources.DataSource{},
 		},
 		Cfg:                  setting.NewCfg(),
-		AccessControl:        acimpl.ProvideAccessControl(setting.NewCfg()),
+		AccessControl:        acimpl.ProvideAccessControl(featuremgmt.WithFeatures()),
 		accesscontrolService: actest.FakeService{},
 	}
 
@@ -125,6 +128,7 @@ func TestAddDataSource_URLWithoutProtocol(t *testing.T) {
 			Access: "direct",
 			Type:   "test",
 		})
+		c.SignedInUser = authedUserWithPermissions(1, 1, []ac.Permission{})
 		return hs.AddDataSource(c)
 	}))
 
@@ -143,10 +147,10 @@ func TestAddDataSource_InvalidJSONData(t *testing.T) {
 	sc := setupScenarioContext(t, "/api/datasources")
 
 	hs.Cfg = setting.NewCfg()
-	hs.Cfg.AuthProxyEnabled = true
-	hs.Cfg.AuthProxyHeaderName = "X-AUTH-PROXY-HEADER"
+	hs.Cfg.AuthProxy.Enabled = true
+	hs.Cfg.AuthProxy.HeaderName = "X-AUTH-PROXY-HEADER"
 	jsonData := simplejson.New()
-	jsonData.Set("httpHeaderName1", hs.Cfg.AuthProxyHeaderName)
+	jsonData.Set("httpHeaderName1", hs.Cfg.AuthProxy.HeaderName)
 
 	sc.m.Post(sc.url, routing.Wrap(func(c *contextmodel.ReqContext) response.Response {
 		c.Req.Body = mockRequestBody(datasources.AddDataSourceCommand{
@@ -156,6 +160,7 @@ func TestAddDataSource_InvalidJSONData(t *testing.T) {
 			Type:     "test",
 			JsonData: jsonData,
 		})
+		c.SignedInUser = authedUserWithPermissions(1, 1, []ac.Permission{})
 		return hs.AddDataSource(c)
 	}))
 
@@ -179,6 +184,7 @@ func TestUpdateDataSource_InvalidURL(t *testing.T) {
 			Access: "direct",
 			Type:   "test",
 		})
+		c.SignedInUser = authedUserWithPermissions(1, 1, []ac.Permission{})
 		return hs.AddDataSource(c)
 	}))
 
@@ -195,10 +201,10 @@ func TestUpdateDataSource_InvalidJSONData(t *testing.T) {
 	}
 	sc := setupScenarioContext(t, "/api/datasources/1234")
 
-	hs.Cfg.AuthProxyEnabled = true
-	hs.Cfg.AuthProxyHeaderName = "X-AUTH-PROXY-HEADER"
+	hs.Cfg.AuthProxy.Enabled = true
+	hs.Cfg.AuthProxy.HeaderName = "X-AUTH-PROXY-HEADER"
 	jsonData := simplejson.New()
-	jsonData.Set("httpHeaderName1", hs.Cfg.AuthProxyHeaderName)
+	jsonData.Set("httpHeaderName1", hs.Cfg.AuthProxy.HeaderName)
 
 	sc.m.Put(sc.url, routing.Wrap(func(c *contextmodel.ReqContext) response.Response {
 		c.Req.Body = mockRequestBody(datasources.AddDataSourceCommand{
@@ -208,12 +214,112 @@ func TestUpdateDataSource_InvalidJSONData(t *testing.T) {
 			Type:     "test",
 			JsonData: jsonData,
 		})
+		c.SignedInUser = authedUserWithPermissions(1, 1, []ac.Permission{})
 		return hs.AddDataSource(c)
 	}))
 
 	sc.fakeReqWithParams("PUT", sc.url, map[string]string{}).exec()
 
 	assert.Equal(t, 400, sc.resp.Code)
+}
+
+// Using a team HTTP header whose name matches the name specified for auth proxy header should fail
+func TestUpdateDataSourceTeamHTTPHeaders_InvalidJSONData(t *testing.T) {
+	tenantID := "1234"
+	testcases := []struct {
+		desc string
+		data datasources.TeamHTTPHeaders
+		want int
+	}{
+		{
+			desc: "We should only allow for headers being X-Prom-Label-Policy",
+			data: datasources.TeamHTTPHeaders{
+				Headers: datasources.TeamHeaders{
+					tenantID: []datasources.TeamHTTPHeader{
+						{
+							Header: "Authorization",
+							Value:  "foo!=bar",
+						},
+					},
+				}},
+			want: 400,
+		},
+		{
+			desc: "Allowed header but no team id",
+			data: datasources.TeamHTTPHeaders{
+				Headers: datasources.TeamHeaders{"": []datasources.TeamHTTPHeader{
+					{
+						Header: "X-Prom-Label-Policy",
+						Value:  "foo=bar",
+					},
+				},
+				}},
+			want: 400,
+		},
+		{
+			desc: "Allowed team id and header name with invalid header values ",
+			data: datasources.TeamHTTPHeaders{
+				Headers: datasources.TeamHeaders{tenantID: []datasources.TeamHTTPHeader{
+					{
+						Header: "X-Prom-Label-Policy",
+						Value:  "Bad value",
+					},
+				},
+				}},
+			want: 400,
+		},
+		// Complete valid case, with team id, header name and header value
+		{
+			desc: "Allowed header and header values ",
+			data: datasources.TeamHTTPHeaders{
+				Headers: datasources.TeamHeaders{tenantID: []datasources.TeamHTTPHeader{
+					{
+						Header: "X-Prom-Label-Policy",
+						Value:  `1234:{ name!="value",foo!~"bar" }`,
+					},
+				},
+				}},
+			want: 200,
+		},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.desc, func(t *testing.T) {
+			hs := &HTTPServer{
+				DataSourcesService: &dataSourcesServiceMock{
+					expectedDatasource: &datasources.DataSource{},
+				},
+				Cfg:                  setting.NewCfg(),
+				Features:             featuremgmt.WithFeatures(featuremgmt.FlagTeamHttpHeaders),
+				accesscontrolService: actest.FakeService{},
+				AccessControl: actest.FakeAccessControl{
+					ExpectedEvaluate: true,
+					ExpectedErr:      nil,
+				},
+			}
+			sc := setupScenarioContext(t, fmt.Sprintf("/api/datasources/%s", tenantID))
+			hs.Cfg.AuthProxy.Enabled = true
+
+			jsonData := simplejson.New()
+			jsonData.Set("teamHttpHeaders", tc.data)
+			sc.m.Put(sc.url, routing.Wrap(func(c *contextmodel.ReqContext) response.Response {
+				c.Req.Body = mockRequestBody(datasources.AddDataSourceCommand{
+					Name:     "Test",
+					URL:      "localhost:5432",
+					Access:   "direct",
+					Type:     "test",
+					JsonData: jsonData,
+				})
+				c.SignedInUser = authedUserWithPermissions(1, 1, []ac.Permission{
+					{Action: datasources.ActionPermissionsWrite, Scope: datasources.ScopeAll},
+				})
+				return hs.AddDataSource(c)
+			}))
+
+			sc.fakeReqWithParams("PUT", sc.url, map[string]string{}).exec()
+
+			assert.Equal(t, tc.want, sc.resp.Code)
+		})
+	}
 }
 
 // Updating data sources with URLs not specifying protocol should work.
@@ -226,7 +332,7 @@ func TestUpdateDataSource_URLWithoutProtocol(t *testing.T) {
 			expectedDatasource: &datasources.DataSource{},
 		},
 		Cfg:                  setting.NewCfg(),
-		AccessControl:        acimpl.ProvideAccessControl(setting.NewCfg()),
+		AccessControl:        acimpl.ProvideAccessControl(featuremgmt.WithFeatures()),
 		accesscontrolService: actest.FakeService{},
 	}
 
@@ -239,6 +345,8 @@ func TestUpdateDataSource_URLWithoutProtocol(t *testing.T) {
 			Access: "direct",
 			Type:   "test",
 		})
+		c.SignedInUser = authedUserWithPermissions(1, 1, []ac.Permission{})
+
 		return hs.AddDataSource(c)
 	}))
 
@@ -257,7 +365,7 @@ func TestUpdateDataSourceByID_DataSourceNameExists(t *testing.T) {
 			},
 		},
 		Cfg:                  setting.NewCfg(),
-		AccessControl:        acimpl.ProvideAccessControl(setting.NewCfg()),
+		AccessControl:        acimpl.ProvideAccessControl(featuremgmt.WithFeatures()),
 		accesscontrolService: actest.FakeService{},
 		Live:                 newTestLive(t, nil),
 	}
@@ -375,11 +483,40 @@ func TestAPI_datasources_AccessControl(t *testing.T) {
 					body = strings.NewReader(tt.body)
 				}
 
-				res, err := server.SendJSON(webtest.RequestWithSignedInUser(server.NewRequest(tt.method, url, body), userWithPermissions(1, tt.permission)))
+				res, err := server.SendJSON(webtest.RequestWithSignedInUser(server.NewRequest(tt.method, url, body), authedUserWithPermissions(1, 1, tt.permission)))
 				require.NoError(t, err)
 				assert.Equal(t, tt.expectedCode, res.StatusCode)
 				require.NoError(t, res.Body.Close())
 			}
+		})
+	}
+}
+
+func TestValidateLBACHeader(t *testing.T) {
+	testcases := []struct {
+		desc            string
+		teamHeaderValue string
+		want            bool
+	}{
+		{
+			desc:            "Should allow valid header",
+			teamHeaderValue: `1234:{ name!="value",foo!~"bar" }`,
+			want:            true,
+		},
+		{
+			desc:            "Should allow valid selector",
+			teamHeaderValue: `1234:{ name!="value",foo!~"bar/baz.foo" }`,
+			want:            true,
+		},
+		{
+			desc:            "Should return false for incorrect header value",
+			teamHeaderValue: `1234:!="value",foo!~"bar" }`,
+			want:            false,
+		},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.desc, func(t *testing.T) {
+			assert.Equal(t, tc.want, validateLBACHeader(tc.teamHeaderValue))
 		})
 	}
 }
@@ -404,10 +541,6 @@ func (m *dataSourcesServiceMock) GetDataSources(ctx context.Context, query *data
 
 func (m *dataSourcesServiceMock) GetDataSourcesByType(ctx context.Context, query *datasources.GetDataSourcesByTypeQuery) ([]*datasources.DataSource, error) {
 	return m.expectedDatasources, m.expectedError
-}
-
-func (m *dataSourcesServiceMock) GetDefaultDataSource(ctx context.Context, query *datasources.GetDefaultDataSourceQuery) (*datasources.DataSource, error) {
-	return nil, m.expectedError
 }
 
 func (m *dataSourcesServiceMock) DeleteDataSource(ctx context.Context, cmd *datasources.DeleteDataSourceCommand) error {
