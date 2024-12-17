@@ -23,18 +23,19 @@ func (e *cloudWatchExecutor) executeTimeSeriesQuery(ctx context.Context, req *ba
 	resp := backend.NewQueryDataResponse()
 
 	if len(req.Queries) == 0 {
-		return nil, fmt.Errorf("request contains no queries")
+		return nil, backend.DownstreamError(fmt.Errorf("request contains no queries"))
 	}
 	// startTime and endTime are always the same for all queries
 	startTime := req.Queries[0].TimeRange.From
 	endTime := req.Queries[0].TimeRange.To
 	if !startTime.Before(endTime) {
-		return nil, fmt.Errorf("invalid time range: start time must be before end time")
+		return nil, backend.DownstreamError(fmt.Errorf("invalid time range: start time must be before end time"))
 	}
 
 	instance, err := e.getInstance(ctx, req.PluginContext)
 	if err != nil {
-		return nil, err
+		resp.Responses[req.Queries[0].RefID] = backend.ErrorResponseWithErrorSource(err)
+		return resp, nil
 	}
 
 	requestQueries, err := models.ParseMetricDataQueries(req.Queries, startTime, endTime, instance.Settings.Region, e.logger.FromContext(ctx),
@@ -127,9 +128,7 @@ func (e *cloudWatchExecutor) executeTimeSeriesQuery(ctx context.Context, req *ba
 	}
 
 	if err := eg.Wait(); err != nil {
-		dataResponse := backend.DataResponse{
-			Error: fmt.Errorf("metric request error: %q", err),
-		}
+		dataResponse := backend.ErrorResponseWithErrorSource(fmt.Errorf("metric request error: %w", err))
 		resultChan <- &responseWrapper{
 			RefId:        getQueryRefIdFromErrorString(err.Error(), requestQueries),
 			DataResponse: &dataResponse,

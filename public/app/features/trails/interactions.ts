@@ -1,7 +1,7 @@
 import { AdHocVariableFilter } from '@grafana/data';
 import { reportInteraction } from '@grafana/runtime';
 
-import { LayoutType } from './ActionTabs/types';
+import { BreakdownLayoutType } from './Breakdown/types';
 import { TrailStepType } from './DataTrailsHistory';
 import { ActionViewType } from './shared';
 
@@ -18,6 +18,7 @@ type Interactions = {
       // By clicking on the label selector at the top of the breakdown
       | 'selector'
     );
+    otel_resource_attribute?: boolean;
   };
   // User changed a label filter.
   label_filter_changed: {
@@ -26,7 +27,7 @@ type Interactions = {
     cause: 'breakdown' | 'adhoc_filter';
   };
   // User changed the breakdown layout
-  breakdown_layout_changed: { layout: LayoutType };
+  breakdown_layout_changed: { layout: BreakdownLayoutType };
   // A metric exploration has started due to one of the following causes
   exploration_started: {
     cause: (
@@ -84,6 +85,13 @@ type Interactions = {
       | 'open_from_embedded'
     );
   };
+  // User clicks on one of the action buttons associated with related logs
+  related_logs_action_clicked: {
+    action: (
+      // Opens Explore Logs
+      | 'open_explore_logs'
+    );
+  };
   // User selects a metric
   metric_selected: {
     from: (
@@ -95,6 +103,29 @@ type Interactions = {
     // The number of search terms activated when the selection was made
     searchTermCount: number | null;
   };
+  // User opens/closes the prefix filter dropdown
+  prefix_filter_clicked: {
+    from: (
+      // By clicking "Select" on a metric panel when on the no-metric-selected metrics list view
+      | 'metric_list'
+      // By clicking "Select" on a metric panel when on the related metrics tab
+      | 'related_metrics'
+    )
+    action: (
+      // Opens the dropdown
+      | 'open'
+      // Closes the dropdown
+      | 'close'
+    )
+  };
+  sorting_changed: {
+      // type of sorting
+      sortBy: string
+  };
+  wasm_not_supported: {},
+  missing_otel_labels_by_truncating_job_and_instance: {
+    metric?: string;
+  },
 };
 
 const PREFIX = 'grafana_explore_metrics_';

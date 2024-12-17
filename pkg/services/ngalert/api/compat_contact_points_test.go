@@ -53,11 +53,6 @@ func TestContactPointFromContactPointExports(t *testing.T) {
 	// use the configs for testing because they have all fields supported by integrations
 	for integrationType, cfg := range notify.AllKnownConfigsForTesting {
 		t.Run(integrationType, func(t *testing.T) {
-			if integrationType == "sns" {
-				// TODO: Add code for SNS in grafana/grafana.
-				// Related grafana/alerting PR: https://github.com/grafana/alerting/pull/173
-				t.Skip("sns not supported yet")
-			}
 			recCfg := &notify.APIReceiver{
 				ConfigReceiver: notify.ConfigReceiver{Name: "test-receiver"},
 				GrafanaIntegrations: notify.GrafanaIntegrations{
@@ -188,5 +183,31 @@ func TestContactPointFromContactPointExports(t *testing.T) {
 		require.Equal(t, int64(112), *result.OnCall[0].MaxAlerts)
 		require.Nil(t, result.OnCall[1].MaxAlerts)
 		require.Nil(t, result.OnCall[2].MaxAlerts)
+	})
+
+	t.Run("mqtt with optional numbers as string", func(t *testing.T) {
+		export := definitions.ContactPointExport{
+			Name: "test",
+			Receivers: []definitions.ReceiverExport{
+				{
+					Type:     "mqtt",
+					Settings: definitions.RawMessage(`{ "qos" : "112" }`),
+				},
+				{
+					Type:     "mqtt",
+					Settings: definitions.RawMessage(`{ "qos" : "test" }`),
+				},
+				{
+					Type:     "mqtt",
+					Settings: definitions.RawMessage(`{ "qos" : null }`),
+				},
+			},
+		}
+		result, err := ContactPointFromContactPointExport(export)
+		require.NoError(t, err)
+		require.Len(t, result.Mqtt, 3)
+		require.Equal(t, int64(112), *result.Mqtt[0].QoS)
+		require.Nil(t, result.Mqtt[1].QoS)
+		require.Nil(t, result.Mqtt[2].QoS)
 	})
 }

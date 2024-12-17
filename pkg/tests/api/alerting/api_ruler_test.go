@@ -798,6 +798,176 @@ func TestAlertRulePostExport(t *testing.T) {
 	})
 }
 
+func TestIntegrationAlertRuleEditorSettings(t *testing.T) {
+	testinfra.SQLiteIntegrationTest(t)
+
+	const folderName = "folder1"
+	const groupName = "test-group"
+
+	// Setup Grafana and its Database
+	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
+		DisableLegacyAlerting: true,
+		EnableUnifiedAlerting: true,
+		EnableQuota:           true,
+		DisableAnonymous:      true,
+		ViewersCanEdit:        true,
+		AppModeProduction:     true,
+	})
+
+	grafanaListedAddr, env := testinfra.StartGrafanaEnv(t, dir, path)
+	apiClient := newAlertingApiClient(grafanaListedAddr, "admin", "admin")
+	createUser(t, env.SQLStore, env.Cfg, user.CreateUserCommand{
+		DefaultOrgRole: string(org.RoleAdmin),
+		Password:       "admin",
+		Login:          "admin",
+	})
+	apiClient.CreateFolder(t, folderName, folderName)
+
+	createAlertInGrafana := func(metadata *apimodels.AlertRuleMetadata) apimodels.GettableRuleGroupConfig {
+		interval, err := model.ParseDuration("1m")
+		require.NoError(t, err)
+		alertRule := apimodels.PostableExtendedRuleNode{
+			ApiRuleNode: &apimodels.ApiRuleNode{
+				For:         &interval,
+				Labels:      map[string]string{"label1": "val1"},
+				Annotations: map[string]string{"annotation1": "val1"},
+			},
+			GrafanaManagedAlert: &apimodels.PostableGrafanaRule{
+				Title:     "AlwaysFiring",
+				Condition: "A",
+				Data: []apimodels.AlertQuery{
+					{
+						RefID: "A",
+						RelativeTimeRange: apimodels.RelativeTimeRange{
+							From: apimodels.Duration(time.Duration(5) * time.Hour),
+							To:   apimodels.Duration(time.Duration(3) * time.Hour),
+						},
+						DatasourceUID: expr.DatasourceUID,
+						Model: json.RawMessage(`{
+						"type": "math",
+						"expression": "2 + 3 > 1"
+						}`),
+					},
+				},
+				Metadata: metadata,
+			},
+		}
+		rules := apimodels.PostableRuleGroupConfig{
+			Name: groupName,
+			Rules: []apimodels.PostableExtendedRuleNode{
+				alertRule,
+			},
+		}
+
+		respModel, status, _ := apiClient.PostRulesGroupWithStatus(t, folderName, &rules)
+		assert.Equal(t, http.StatusAccepted, status)
+		require.Len(t, respModel.Created, 1)
+
+		createdRuleGroup := apiClient.GetRulesGroup(t, folderName, rules.Name).GettableRuleGroupConfig
+		require.Len(t, createdRuleGroup.Rules, 1)
+
+		expectedMetadata := alertRule.GrafanaManagedAlert.Metadata
+		if metadata == nil {
+			expectedMetadata = &apimodels.AlertRuleMetadata{
+				EditorSettings: apimodels.AlertRuleEditorSettings{
+					SimplifiedQueryAndExpressionsSection: false,
+				},
+			}
+		}
+		require.Equal(t, expectedMetadata, createdRuleGroup.Rules[0].GrafanaManagedAlert.Metadata)
+
+		return createdRuleGroup
+	}
+
+	t.Run("set simplified query editor in editor settings", func(t *testing.T) {
+		metadata := &apimodels.AlertRuleMetadata{
+			EditorSettings: apimodels.AlertRuleEditorSettings{
+				SimplifiedQueryAndExpressionsSection: false,
+			},
+		}
+		createdRuleGroup := createAlertInGrafana(metadata)
+
+		rulesWithUID := convertGettableRuleGroupToPostable(createdRuleGroup)
+		rulesWithUID.Rules[0].GrafanaManagedAlert.Metadata.EditorSettings.SimplifiedQueryAndExpressionsSection = true
+
+		_, status, _ := apiClient.PostRulesGroupWithStatus(t, folderName, &rulesWithUID)
+		assert.Equal(t, http.StatusAccepted, status)
+
+		updatedRuleGroup := apiClient.GetRulesGroup(t, folderName, groupName).GettableRuleGroupConfig
+		require.Len(t, updatedRuleGroup.Rules, 1)
+		require.True(t, updatedRuleGroup.Rules[0].GrafanaManagedAlert.Metadata.EditorSettings.SimplifiedQueryAndExpressionsSection)
+	})
+
+	t.Run("disable simplified query editor in editor settings", func(t *testing.T) {
+		metadata := &apimodels.AlertRuleMetadata{
+			EditorSettings: apimodels.AlertRuleEditorSettings{
+				SimplifiedQueryAndExpressionsSection: true,
+			},
+		}
+		createdRuleGroup := createAlertInGrafana(metadata)
+
+		rulesWithUID := convertGettableRuleGroupToPostable(createdRuleGroup)
+
+		// disabling the editor
+		rulesWithUID.Rules[0].GrafanaManagedAlert.Metadata.EditorSettings.SimplifiedQueryAndExpressionsSection = false
+
+		_, status, _ := apiClient.PostRulesGroupWithStatus(t, folderName, &rulesWithUID)
+		assert.Equal(t, http.StatusAccepted, status)
+
+		updatedRuleGroup := apiClient.GetRulesGroup(t, folderName, groupName).GettableRuleGroupConfig
+		require.Len(t, updatedRuleGroup.Rules, 1)
+		require.False(t, updatedRuleGroup.Rules[0].GrafanaManagedAlert.Metadata.EditorSettings.SimplifiedQueryAndExpressionsSection)
+	})
+
+	t.Run("set simplified notifications editor in editor settings", func(t *testing.T) {
+		metadata := &apimodels.AlertRuleMetadata{
+			EditorSettings: apimodels.AlertRuleEditorSettings{
+				SimplifiedQueryAndExpressionsSection: false,
+			},
+		}
+		createdRuleGroup := createAlertInGrafana(metadata)
+
+		rulesWithUID := convertGettableRuleGroupToPostable(createdRuleGroup)
+		rulesWithUID.Rules[0].GrafanaManagedAlert.Metadata.EditorSettings.SimplifiedNotificationsSection = true
+
+		_, status, _ := apiClient.PostRulesGroupWithStatus(t, folderName, &rulesWithUID)
+		assert.Equal(t, http.StatusAccepted, status)
+
+		updatedRuleGroup := apiClient.GetRulesGroup(t, folderName, groupName).GettableRuleGroupConfig
+		require.Len(t, updatedRuleGroup.Rules, 1)
+		require.True(t, updatedRuleGroup.Rules[0].GrafanaManagedAlert.Metadata.EditorSettings.SimplifiedNotificationsSection)
+	})
+
+	t.Run("disable simplified notifications editor in editor settings", func(t *testing.T) {
+		metadata := &apimodels.AlertRuleMetadata{
+			EditorSettings: apimodels.AlertRuleEditorSettings{
+				SimplifiedNotificationsSection: true,
+			},
+		}
+		createdRuleGroup := createAlertInGrafana(metadata)
+
+		rulesWithUID := convertGettableRuleGroupToPostable(createdRuleGroup)
+
+		// disabling the editor
+		rulesWithUID.Rules[0].GrafanaManagedAlert.Metadata.EditorSettings.SimplifiedNotificationsSection = false
+
+		_, status, _ := apiClient.PostRulesGroupWithStatus(t, folderName, &rulesWithUID)
+		assert.Equal(t, http.StatusAccepted, status)
+
+		updatedRuleGroup := apiClient.GetRulesGroup(t, folderName, groupName).GettableRuleGroupConfig
+		require.Len(t, updatedRuleGroup.Rules, 1)
+		require.False(t, updatedRuleGroup.Rules[0].GrafanaManagedAlert.Metadata.EditorSettings.SimplifiedNotificationsSection)
+	})
+
+	t.Run("post alert without metadata", func(t *testing.T) {
+		createAlertInGrafana(nil)
+
+		createdRuleGroup := apiClient.GetRulesGroup(t, folderName, groupName).GettableRuleGroupConfig
+		require.Len(t, createdRuleGroup.Rules, 1)
+		require.False(t, createdRuleGroup.Rules[0].GrafanaManagedAlert.Metadata.EditorSettings.SimplifiedQueryAndExpressionsSection)
+	})
+}
+
 func TestIntegrationAlertRuleConflictingTitle(t *testing.T) {
 	testinfra.SQLiteIntegrationTest(t)
 
@@ -1021,7 +1191,13 @@ func TestIntegrationRulerRulesFilterByDashboard(t *testing.T) {
 				"namespace_uid": "nsuid",
 				"rule_group": "anotherrulegroup",
 				"no_data_state": "NoData",
-				"exec_err_state": "Alerting"
+				"exec_err_state": "Alerting",
+				"metadata": {
+					"editor_settings": {
+						"simplified_query_and_expressions_section": false,
+						"simplified_notifications_section": false
+					}
+				}
 			}
 		}, {
 			"expr": "",
@@ -1054,7 +1230,13 @@ func TestIntegrationRulerRulesFilterByDashboard(t *testing.T) {
 				"namespace_uid": "nsuid",
 				"rule_group": "anotherrulegroup",
 				"no_data_state": "Alerting",
-				"exec_err_state": "Alerting"
+				"exec_err_state": "Alerting",
+				"metadata": {
+					"editor_settings": {
+						"simplified_query_and_expressions_section": false,
+						"simplified_notifications_section": false
+					}
+				}
 			}
 		}]
 	}]
@@ -1099,7 +1281,13 @@ func TestIntegrationRulerRulesFilterByDashboard(t *testing.T) {
 				"namespace_uid": "nsuid",
 				"rule_group": "anotherrulegroup",
 				"no_data_state": "NoData",
-				"exec_err_state": "Alerting"
+				"exec_err_state": "Alerting",
+				"metadata": {
+					"editor_settings": {
+						"simplified_query_and_expressions_section": false,
+						"simplified_notifications_section": false
+					}
+				}
 			}
 		}]
 	}]
@@ -2098,5 +2286,61 @@ func TestIntegrationRuleNotificationSettings(t *testing.T) {
 		}, 10*time.Second, 1*time.Second) {
 			t.Logf("config: %s", routeBody)
 		}
+	})
+}
+
+func TestIntegrationRuleUpdateAllDatabases(t *testing.T) {
+	// Setup Grafana and its Database
+	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
+		DisableLegacyAlerting: true,
+		EnableUnifiedAlerting: true,
+		DisableAnonymous:      true,
+		AppModeProduction:     true,
+	})
+	grafanaListedAddr, env := testinfra.StartGrafanaEnv(t, dir, path)
+
+	// Create a user to make authenticated requests
+	createUser(t, env.SQLStore, env.Cfg, user.CreateUserCommand{
+		DefaultOrgRole: string(org.RoleAdmin),
+		Password:       "admin",
+		Login:          "admin",
+	})
+
+	client := newAlertingApiClient(grafanaListedAddr, "admin", "admin")
+
+	folderUID := util.GenerateShortUID()
+	client.CreateFolder(t, folderUID, "folder1")
+
+	t.Run("group renamed followed by delete for case-only changes should not delete both groups", func(t *testing.T) { // Regression test.
+		group := generateAlertRuleGroup(3, alertRuleGen())
+		groupName := group.Name
+
+		_, status, body := client.PostRulesGroupWithStatus(t, folderUID, &group)
+		require.Equalf(t, http.StatusAccepted, status, "failed to post rule group. Response: %s", body)
+		getGroup := client.GetRulesGroup(t, folderUID, group.Name)
+		require.Lenf(t, getGroup.Rules, 3, "expected 3 rules in group")
+		require.Equal(t, groupName, getGroup.Rules[0].GrafanaManagedAlert.RuleGroup)
+
+		group = convertGettableRuleGroupToPostable(getGroup.GettableRuleGroupConfig)
+		newGroup := strings.ToUpper(group.Name)
+		group.Name = newGroup
+		_, status, body = client.PostRulesGroupWithStatus(t, folderUID, &group)
+		require.Equalf(t, http.StatusAccepted, status, "failed to post rule group. Response: %s", body)
+
+		getGroup = client.GetRulesGroup(t, folderUID, group.Name)
+		require.Lenf(t, getGroup.Rules, 3, "expected 3 rules in group")
+		require.Equal(t, newGroup, getGroup.Rules[0].GrafanaManagedAlert.RuleGroup)
+
+		status, body = client.DeleteRulesGroup(t, folderUID, groupName)
+		require.Equalf(t, http.StatusAccepted, status, "failed to post noop rule group. Response: %s", body)
+
+		// Old group is gone.
+		getGroup = client.GetRulesGroup(t, folderUID, groupName)
+		require.Lenf(t, getGroup.Rules, 0, "expected no rules")
+
+		// New group still exists.
+		getGroup = client.GetRulesGroup(t, folderUID, newGroup)
+		require.Lenf(t, getGroup.Rules, 3, "expected 3 rules in group")
+		require.Equal(t, newGroup, getGroup.Rules[0].GrafanaManagedAlert.RuleGroup)
 	})
 }

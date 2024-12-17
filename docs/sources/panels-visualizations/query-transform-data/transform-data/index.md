@@ -46,17 +46,12 @@ refs:
     - pattern: /docs/grafana/
       destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/visualizations/table/#sparkline
     - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/visualizations/table/#sparkline
+      destination: /docs/grafana-cloud/visualizations/panels-visualizations/visualizations/table/#sparkline
   calculation-types:
     - pattern: /docs/grafana/
       destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/query-transform-data/calculation-types/
     - pattern: /docs/grafana-cloud/
       destination: /docs/grafana-cloud/visualizations/panels-visualizations/query-transform-data/calculation-types/
-  heatmap-panel:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/visualizations/heatmap/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/visualizations/heatmap/
   configuration-file:
     - pattern: /docs/grafana/
       destination: /docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-grafana/#configuration-file-location
@@ -64,9 +59,9 @@ refs:
       destination: /docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-grafana/#configuration-file-location
   dashboard-variable:
     - pattern: /docs/grafana/
-      destination: docs/grafana/<GRAFANA_VERSION>/dashboards/variables/
+      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/variables/
     - pattern: /docs/grafana-cloud/
-      destination: docs/grafana/<GRAFANA_VERSION>/dashboards/variables/
+      destination: /docs/grafana-cloud/visualizations/dashboards/variables/
   feature-toggle:
     - pattern: /docs/grafana/
       destination: /docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-grafana/#feature_toggles
@@ -76,12 +71,12 @@ refs:
     - pattern: /docs/grafana/
       destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/visualizations/table/
     - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/visualizations/table/
+      destination: /docs/grafana-cloud/visualizations/panels-visualizations/visualizations/table/
   time-series-panel:
     - pattern: /docs/grafana/
       destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/visualizations/time-series/
     - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/visualizations/time-series/
+      destination: /docs/grafana-cloud/visualizations/panels-visualizations/visualizations/time-series/
 ---
 
 # Transform data
@@ -119,7 +114,7 @@ The following steps guide you in adding a transformation to data. This documenta
 1. Click the **Transform** tab.
 1. Click a transformation.
    A transformation row appears where you configure the transformation options. For more information about how to configure a transformation, refer to [Transformation functions](#transformation-functions).
-   For information about available calculations, refer to [Calculation types](ref:calculation-types).
+   For information about available calculations, refer to [Calculation types][].
 1. To apply another transformation, click **Add transformation**.
    This transformation acts on the result set returned by the previous transformation.
    {{< figure src="/static/img/docs/transformations/transformations-7-0.png" class="docs-image--no-shadow" max-width= "1100px" alt="Transform tab in the panel editor" >}}
@@ -191,13 +186,12 @@ Use this transformation to add a new field calculated from two other fields. Eac
     - **Variance** - Calculates the moving variance.
   - **Row index** - Insert a field with the row index.
 - **Field name** - Select the names of fields you want to use in the calculation for the new field.
-- **Calculation** - If you select **Reduce row** mode, then the **Calculation** field appears. Click in the field to see a list of calculation choices you can use to create the new field. For information about available calculations, refer to [Calculation types](ref:calculation-types).
+- **Calculation** - If you select **Reduce row** mode, then the **Calculation** field appears. Click in the field to see a list of calculation choices you can use to create the new field. For information about available calculations, refer to [Calculation types][].
 - **Operation** - If you select **Binary operation** or **Unary operation** mode, then the **Operation** fields appear. These fields allow you to apply basic math operations on values in a single row from selected fields. You can also use numerical values for binary operations.
+  - **All number fields** - Set the left side of a **Binary operation** to apply the calculation to all number fields.
 - **As percentile** - If you select **Row index** mode, then the **As percentile** switch appears. This switch allows you to transform the row index as a percentage of the total number of rows.
 - **Alias** - (Optional) Enter the name of your new field. If you leave this blank, then the field will be named to match the calculation.
 - **Replace all fields** - (Optional) Select this option if you want to hide all other fields and display only your calculated field in the visualization.
-
-> **Note:** **Cumulative functions** and **Window functions** modes are currently in public preview. Grafana Labs offers limited support, and breaking changes might occur prior to the feature being made generally available. Enable the `addFieldFromCalculationStatFunctions` feature toggle in Grafana to use this feature. Contact Grafana Support to enable this feature in Grafana Cloud.
 
 In the example below, we added two fields together and named them Sum.
 
@@ -292,6 +286,8 @@ In the field mapping specify:
 
 Grafana builds value mappings from your query result and applies them to the real data query results. You should see values being mapped and colored according to the config query results.
 
+> **Note:** When you use this transformation for thresholds, the visualization continues to use the panel's base threshold.
+
 ### Convert field type
 
 Use this transformation to modify the field type of a specified field.
@@ -303,6 +299,9 @@ This transformation has the following options:
   - **Numeric** - attempts to make the values numbers
   - **String** - will make the values strings
   - **Time** - attempts to parse the values as time
+    - The input will be parsed according to the [Moment.js parsing format](https://momentjs.com/docs/#/parsing/)
+    - It will parse the numeric input as a Unix epoch timestamp in milliseconds.
+      You must multiply your input by 1000 if it's in seconds.
     - Will show an option to specify a DateFormat as input by a string like yyyy-mm-dd or DD MM YYYY hh:mm:ss
   - **Boolean** - will make the values booleans
   - **Enum** - will make the values enums
@@ -341,6 +340,8 @@ Use this transformation to select a source of data and extract content from it i
 - **Format** - Choose one of the following:
   - **JSON** - Parse JSON content from the source.
   - **Key+value pairs** - Parse content in the format 'a=b' or 'c:d' from the source.
+  - **RegExp** - Parse content using a regular expression with [named capturing group(s)](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Regular_expressions/Named_capturing_group) like `/(?<NewField>.*)/`.
+    {{< figure src="/media/docs/grafana/panels-visualizations/screenshot-regexp-detail-v11.3-2.png" class="docs-image--no-shadow" max-width= "1100px" alt="Example of a regular expression" >}}
   - **Auto** - Discover fields automatically.
 - **Replace All Fields** - (Optional) Select this option to hide all other fields and display only your calculated field in the visualization.
 - **Keep Time** - (Optional) Available only if **Replace All Fields** is true. Keeps the time field in the output.
@@ -355,7 +356,7 @@ Consider the following dataset:
 | 1636678680000000000 | {"value": 5}  |
 | 1636678620000000000 | {"value": 12} |
 
-You could prepare the data to be used by a [Time series panel](ref:time-series-panel) with this configuration:
+You could prepare the data to be used by a [Time series panel][] with this configuration:
 
 - Source: json_data
 - Format: JSON
@@ -536,7 +537,7 @@ Click and uncheck the field names to remove them from the result. Fields that ar
 
 #### Use a dashboard variable
 
-Enable 'From variable' to let you select a dashboard variable that's used to include fields. By setting up a [dashboard variable](ref:dashboard-variable) with multiple choices, the same fields can be displayed across multiple visualizations.
+Enable 'From variable' to let you select a dashboard variable that's used to include fields. By setting up a [dashboard variable][] with multiple choices, the same fields can be displayed across multiple visualizations.
 
 {{< figure src="/static/img/docs/transformations/filter-name-table-before-7-0.png" class="docs-image--no-shadow" max-width= "1100px" alt="A table visualization with time, value, Min, and Max columns" >}}
 
@@ -567,8 +568,6 @@ Use this transformation to customize the output of a string field. This transfor
 
 This transformation provides a convenient way to standardize and tailor the presentation of string data for better visualization and analysis.
 
-> **Note:** This transformation is currently in public preview. Grafana Labs offers limited support, and breaking changes might occur prior to the feature being made generally available. Enable the `formatString` feature toggle in Grafana to use this feature. Contact Grafana Support to enable this feature in Grafana Cloud.
-
 ### Format time
 
 Use this transformation to customize the output of a time field. Output can be formatted using [Moment.js format strings](https://momentjs.com/docs/#/displaying/). For example, if you want to display only the year of a time field, the format string 'YYYY' can be used to show the calendar year (for example, 1999 or 2012).
@@ -595,7 +594,7 @@ This transformation lets you tailor the time representation in your visualizatio
 
 ### Group by
 
-Use this transformation to group the data by a specified field (column) value and process calculations on each group. Click to see a list of calculation choices. For information about available calculations, refer to [Calculation types](ref:calculation-types).
+Use this transformation to group the data by a specified field (column) value and process calculations on each group. Click to see a list of calculation choices. For information about available calculations, refer to [Calculation types][].
 
 Here's an example of original data.
 
@@ -675,7 +674,7 @@ We can generate a matrix using the values of 'Server Status' as column names, th
 
 Use this transformation to construct a matrix by specifying fields from your query results. The matrix output reflects the relationships between the unique values in these fields. This helps you present complex relationships in a clear and structured matrix format.
 
-### Group to nested table
+### Group to nested tables
 
 Use this transformation to group the data by a specified field (column) value and process calculations on each group. Records are generated that share the same grouped field value, to be displayed in a nested table.
 
@@ -687,7 +686,7 @@ Once **Calculate** has been selected, another selection box will appear next to 
 
 {{< figure src="/static/img/docs/transformations/nested-table-select-stat.png" class="docs-image--no-shadow" max-width= "1100px" alt="A select box showing available statistic calculations once the calculate option for the field has been selected." >}}
 
-For information about available calculations, refer to [Calculation types](ref:calculation-types).
+For information about available calculations, refer to [Calculation types][].
 
 Here's an example of original data:
 
@@ -1074,6 +1073,14 @@ Here is the result after adding a Limit transformation with a value of '3':
 | 2020-07-07 11:34:20 | Humidity    | 22    |
 | 2020-07-07 10:32:20 | Humidity    | 29    |
 
+Using a negative number, you can keep values from the end of the set. Here is the result after adding a Limit transformation with a value of '-3':
+
+| Time                | Metric      | Value |
+| ------------------- | ----------- | ----- |
+| 2020-07-07 10:31:22 | Temperature | 22    |
+| 2020-07-07 09:30:57 | Humidity    | 33    |
+| 2020-07-07 09:30:05 | Temperature | 19    |
+
 This transformation helps you tailor the visual presentation of your data to focus on the most relevant information.
 
 ### Merge series/tables
@@ -1211,8 +1218,6 @@ Select this option to transform the time series data frame from the long format 
 | ------------------- | ------ | ------ |
 | 2023-01-01 00:00:00 | 10     | 20     |
 | 2023-01-01 01:00:00 | 15     | 25     |
-
-> **Note:** This transformation is available in Grafana 7.5.10+ and Grafana 8.0.6+.
 
 ### Reduce
 
@@ -1384,8 +1389,6 @@ Here is the result after applying the Series to rows transformation.
 
 This transformation facilitates the consolidation of results from multiple time series queries, providing a streamlined and unified dataset for efficient analysis and visualization in a tabular format.
 
-> **Note:** This transformation is available in Grafana 7.1+.
-
 ### Sort by
 
 Use this transformation to sort each frame within a query result based on a specified field, making your data easier to understand and analyze. By configuring the desired field for sorting, you can control the order in which the data is presented in the table or visualization.
@@ -1419,7 +1422,7 @@ This transformation allows you to manipulate and analyze geospatial data, enabli
 
 ### Time series to table transform
 
-Use this transformation to convert time series results into a table, transforming a time series data frame into a **Trend** field which can then be used with the [sparkline cell type](ref:sparkline-cell-type). If there are multiple time series queries, each will result in a separate table data frame. These can be joined using join or merge transforms to produce a single table with multiple sparklines per row.
+Use this transformation to convert time series results into a table, transforming a time series data frame into a **Trend** field which can then be used with the [sparkline cell type][]. If there are multiple time series queries, each will result in a separate table data frame. These can be joined using join or merge transforms to produce a single table with multiple sparklines per row.
 
 {{< figure src="/static/img/docs/transformations/table-sparklines.png" class="docs-image--no-shadow" max-width= "1100px" alt="A table panel showing multiple values and their corresponding sparklines." >}}
 
@@ -1427,7 +1430,28 @@ For each generated **Trend** field value, a calculation function can be selected
 
 {{< figure src="/static/img/docs/transformations/timeseries-table-select-stat.png" class="docs-image--no-shadow" max-width= "1100px" alt="A select box showing available statistics that can be calculated." >}}
 
-> **Note:** This transformation is available in Grafana 9.5+ as an opt-in beta feature. Modify the Grafana [configuration file](ref:configuration-file) to use it.
+> **Note:** This transformation is available in Grafana 9.5+ as an opt-in beta feature. Modify the Grafana [configuration file][] to use it.
+
+### Transpose
+
+Use this transformation to pivot the data frame, converting rows into columns and columns into rows. This transformation is particularly useful when you want to switch the orientation of your data to better suit your visualization needs.
+If you have multiple types it will default to string type.
+
+**Before Transformation:**
+
+| env  | January | February |
+| ---- | ------- | -------- |
+| prod | 1       | 2        |
+| dev  | 3       | 4        |
+
+**After applying transpose transformation:**
+
+| Field    | prod | dev |
+| -------- | ---- | --- |
+| January  | 1    | 3   |
+| February | 2    | 4   |
+
+{{< figure src="/media/docs/grafana/transformations/screenshot-grafana-11-2-transpose-transformation.png" class="docs-image--no-shadow" max-width= "1100px" alt="Before and after transpose transformation" >}}
 
 ### Regression analysis
 
@@ -1442,4 +1466,10 @@ There are two different models:
 
 > **Note:** This transformation is currently in public preview. Grafana Labs offers limited support, and breaking changes might occur prior to the feature being made generally available. Enable the `regressionTransformation` feature toggle in Grafana to use this feature. Contact Grafana Support to enable this feature in Grafana Cloud.
 
-[Data frames]: https://grafana.com/developers/plugin-tools/introduction/data-frames/
+[Table panel]: ref:table-panel
+[Calculation types]: ref:calculation-types
+[sparkline cell type]: ref:sparkline-cell-type
+[configuration file]: ref:configuration-file
+[Time series panel]: ref:time-series-panel
+[feature toggle]: ref:feature-toggle
+[dashboard variable]: ref:dashboard-variable

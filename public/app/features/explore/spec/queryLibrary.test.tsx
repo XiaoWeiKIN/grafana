@@ -1,4 +1,3 @@
-import React from 'react';
 import { Props } from 'react-virtualized-auto-sizer';
 
 import { EventBusSrv } from '@grafana/data';
@@ -106,7 +105,6 @@ describe('QueryLibrary', () => {
     await waitForExplore();
     await openQueryLibrary();
     await assertQueryLibraryTemplateExists('loki', 'Loki Query Template');
-    await assertQueryLibraryTemplateExists('elastic', 'Elastic Query Template');
   });
 
   it('Shows add to query library button only when the toggle is enabled', async () => {
@@ -139,7 +137,7 @@ describe('QueryLibrary', () => {
     expect(testEventBus.publish).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'alert-success',
-        payload: ['Query template successfully added to the library'],
+        payload: ['Query successfully saved to the library'],
       })
     );
     await assertAddToQueryLibraryButtonExists(false);

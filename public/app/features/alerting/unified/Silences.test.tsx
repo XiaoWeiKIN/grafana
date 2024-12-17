@@ -1,4 +1,4 @@
-import React from 'react';
+import { Route, Routes } from 'react-router-dom-v5-compat';
 import { render, screen, userEvent, waitFor, within } from 'test/test-utils';
 import { byLabelText, byPlaceholderText, byRole, byTestId, byText } from 'testing-library-selector';
 
@@ -7,16 +7,19 @@ import { selectors } from '@grafana/e2e-selectors';
 import { config, locationService } from '@grafana/runtime';
 import { mockAlertRuleApi, setupMswServer } from 'app/features/alerting/unified/mockApi';
 import { waitForServerRequest } from 'app/features/alerting/unified/mocks/server/events';
-import { MOCK_GRAFANA_ALERT_RULE_TITLE } from 'app/features/alerting/unified/mocks/server/handlers/alertRules';
 import {
   MOCK_DATASOURCE_NAME_BROKEN_ALERTMANAGER,
   MOCK_DATASOURCE_UID_BROKEN_ALERTMANAGER,
 } from 'app/features/alerting/unified/mocks/server/handlers/datasources';
+import { MOCK_GRAFANA_ALERT_RULE_TITLE } from 'app/features/alerting/unified/mocks/server/handlers/grafanaRuler';
 import { silenceCreateHandler } from 'app/features/alerting/unified/mocks/server/handlers/silences';
+import { MATCHER_ALERT_RULE_UID } from 'app/features/alerting/unified/utils/constants';
 import { MatcherOperator, SilenceState } from 'app/plugins/datasource/alertmanager/types';
 import { AccessControlAction } from 'app/types';
 
-import Silences from './Silences';
+import NewSilencePage from './NewSilencePage';
+import ExistingSilenceEditorPage from './components/silences/SilencesEditor';
+import SilencesTablePage from './components/silences/SilencesTable';
 import {
   MOCK_SILENCE_ID_EXISTING,
   MOCK_SILENCE_ID_EXISTING_ALERT_RULE_UID,
@@ -25,20 +28,25 @@ import {
   mockDataSource,
   mockSilences,
 } from './mocks';
-import { grafanaRulerRule } from './mocks/alertRuleApi';
+import { grafanaRulerRule } from './mocks/grafanaRulerApi';
 import { setupDataSources } from './testSetup/datasources';
 import { DataSourceType, GRAFANA_RULES_SOURCE_NAME } from './utils/datasource';
-
-jest.mock('app/core/services/context_srv');
 
 const TEST_TIMEOUT = 60000;
 
 const renderSilences = (location = '/alerting/silences/') => {
-  return render(<Silences />, {
-    historyOptions: {
-      initialEntries: [location],
-    },
-  });
+  return render(
+    <Routes>
+      <Route path="/alerting/silences" element={<SilencesTablePage />} />
+      <Route path="/alerting/silence/new" element={<NewSilencePage />} />
+      <Route path="/alerting/silence/:id/edit" element={<ExistingSilenceEditorPage />} />
+    </Routes>,
+    {
+      historyOptions: {
+        initialEntries: [location],
+      },
+    }
+  );
 };
 
 const dataSources = {
@@ -57,7 +65,6 @@ const ui = {
   notExpiredTable: byTestId('not-expired-table'),
   expiredTable: byTestId('expired-table'),
   expiredCaret: byText(/expired silences \(/i),
-  silencesTags: byLabelText(/tags/i),
   silenceRow: byTestId('row'),
   silencedAlertCell: byTestId('alerts'),
   addSilenceButton: byRole('link', { name: /add silence/i }),
@@ -79,18 +86,6 @@ const ui = {
     createdBy: byText(/created by \*/i),
     loadingIndicator: byTestId('Spinner'),
   },
-};
-
-const resetMocks = () => {
-  jest.resetAllMocks();
-
-  grantUserPermissions([
-    AccessControlAction.AlertingInstanceRead,
-    AccessControlAction.AlertingInstanceCreate,
-    AccessControlAction.AlertingInstanceUpdate,
-    AccessControlAction.AlertingInstancesExternalRead,
-    AccessControlAction.AlertingInstancesExternalWrite,
-  ]);
 };
 
 const setUserLogged = (isLogged: boolean) => {
@@ -115,17 +110,20 @@ const server = setupMswServer();
 
 beforeEach(() => {
   setupDataSources(dataSources.am, dataSources[MOCK_DATASOURCE_NAME_BROKEN_ALERTMANAGER]);
+  grantUserPermissions([
+    AccessControlAction.AlertingInstanceRead,
+    AccessControlAction.AlertingInstanceCreate,
+    AccessControlAction.AlertingInstanceUpdate,
+    AccessControlAction.AlertingInstancesExternalRead,
+    AccessControlAction.AlertingInstancesExternalWrite,
+  ]);
 });
 
 describe('Silences', () => {
-  beforeAll(resetMocks);
-  afterEach(resetMocks);
-
   it(
     'loads and shows silences',
     async () => {
-      const user = userEvent.setup();
-      renderSilences();
+      const { user } = renderSilences();
 
       expect(await ui.notExpiredTable.find()).toBeInTheDocument();
 
@@ -174,8 +172,7 @@ describe('Silences', () => {
   it(
     'filters silences by matchers',
     async () => {
-      const user = userEvent.setup();
-      renderSilences();
+      const { user } = renderSilences();
 
       const queryBar = await ui.queryBar.find();
       await user.type(queryBar, 'foo=bar');
@@ -211,8 +208,6 @@ describe('Silences', () => {
 
 describe('Silence create/edit', () => {
   const baseUrlPath = '/alerting/silence/new';
-  beforeAll(resetMocks);
-  afterEach(resetMocks);
 
   beforeEach(() => {
     mockAlertRuleApi(server).getAlertRule(MOCK_SILENCE_ID_EXISTING_ALERT_RULE_UID, grafanaRulerRule);
@@ -262,8 +257,7 @@ describe('Silence create/edit', () => {
   it(
     'creates a new silence',
     async () => {
-      const user = userEvent.setup();
-      renderSilences(`${baseUrlPath}?alertmanager=${GRAFANA_RULES_SOURCE_NAME}`);
+      const { user } = renderSilences(`${baseUrlPath}?alertmanager=${GRAFANA_RULES_SOURCE_NAME}`);
       expect(await ui.editor.durationField.find()).toBeInTheDocument();
 
       const postRequest = waitForServerRequest(silenceCreateHandler());
@@ -313,6 +307,14 @@ describe('Silence create/edit', () => {
     TEST_TIMEOUT
   );
 
+  it('works when previewing alerts with spaces in label name', async () => {
+    renderSilences(`${baseUrlPath}?alertmanager=${GRAFANA_RULES_SOURCE_NAME}`);
+
+    await enterSilenceLabel(0, 'label with spaces', MatcherOperator.equal, 'value with spaces');
+
+    expect((await screen.findAllByTestId('row'))[0]).toBeInTheDocument();
+  });
+
   it('shows an error when existing silence cannot be found', async () => {
     renderSilences('/alerting/silence/foo-bar/edit');
 
@@ -340,14 +342,17 @@ describe('Silence create/edit', () => {
     expect(await screen.findByLabelText(/alert rule/i)).toHaveValue(grafanaRulerRule.grafana_alert.title);
   });
 
+  it('populates form with information when specifying alert rule UID in matchers', async () => {
+    renderSilences(`/alerting/silence/new?matcher=${MATCHER_ALERT_RULE_UID}%3D${grafanaRulerRule.grafana_alert.uid}`);
+    expect(await screen.findByLabelText(/alert rule/i)).toHaveValue(grafanaRulerRule.grafana_alert.title);
+  });
+
   it(
     'silences page should contain alertmanager parameter after creating a silence',
     async () => {
-      const user = userEvent.setup();
-
       const postRequest = waitForServerRequest(silenceCreateHandler());
 
-      renderSilences(`${baseUrlPath}?alertmanager=${GRAFANA_RULES_SOURCE_NAME}`);
+      const { user } = renderSilences(`${baseUrlPath}?alertmanager=${GRAFANA_RULES_SOURCE_NAME}`);
       await waitFor(() => expect(ui.editor.durationField.query()).not.toBeNull());
 
       await enterSilenceLabel(0, 'foo', MatcherOperator.equal, 'bar');

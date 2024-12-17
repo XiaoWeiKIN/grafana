@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import * as React from 'react';
 import { usePrevious } from 'react-use';
 
 import { TimeRange } from '@grafana/data';
@@ -17,7 +18,7 @@ import FormatAsField from '../shared/FormatAsField';
 
 import Filters from './Filters';
 import TraceTypeField from './TraceTypeField';
-import { setDefaultTracesQuery, setFormatAs, setQueryOperationId } from './setQueryValue';
+import { onLoad, setDefaultTracesQuery, setFormatAs, setQueryOperationId } from './setQueryValue';
 
 interface TracesQueryEditorProps {
   query: AzureMonitorQuery;
@@ -168,6 +169,7 @@ const TracesQueryEditor = ({
               setFormatAs={setFormatAs}
               resultFormat={query.azureTraces?.resultFormat}
               range={range}
+              onLoad={onLoad}
             />
           </EditorFieldGroup>
         </EditorRow>

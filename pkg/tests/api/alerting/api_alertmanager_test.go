@@ -18,9 +18,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/grafana/grafana/pkg/apimachinery/errutil"
 	"github.com/grafana/grafana/pkg/expr"
 	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/infra/tracing"
+	"github.com/grafana/grafana/pkg/services/apiserver/options"
 	apimodels "github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
 	ngmodels "github.com/grafana/grafana/pkg/services/ngalert/models"
 	ngstore "github.com/grafana/grafana/pkg/services/ngalert/store"
@@ -33,7 +35,6 @@ import (
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/tests/testinfra"
 	"github.com/grafana/grafana/pkg/util"
-	"github.com/grafana/grafana/pkg/util/errutil"
 )
 
 type Response struct {
@@ -694,15 +695,18 @@ func TestIntegrationRulerAccess(t *testing.T) {
 func TestIntegrationDeleteFolderWithRules(t *testing.T) {
 	testinfra.SQLiteIntegrationTest(t)
 
-	// Setup Grafana and its Database
-	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
+	opts := testinfra.GrafanaOpts{
 		DisableLegacyAlerting: true,
 		EnableUnifiedAlerting: true,
 		EnableQuota:           true,
 		DisableAnonymous:      true,
 		ViewersCanEdit:        true,
 		AppModeProduction:     true,
-	})
+		APIServerStorageType:  options.StorageTypeLegacy,
+	}
+
+	// Setup Grafana and its Database
+	dir, path := testinfra.CreateGrafDir(t, opts)
 
 	grafanaListedAddr, env := testinfra.StartGrafanaEnv(t, dir, path)
 
@@ -725,8 +729,7 @@ func TestIntegrationDeleteFolderWithRules(t *testing.T) {
 
 	createRule(t, apiClient, "default")
 
-	// First, let's have an editor create a rule within the folder/namespace.
-	{
+	t.Run("editor create a rule within the folder/namespace", func(t *testing.T) {
 		u := fmt.Sprintf("http://editor:editor@%s/api/ruler/grafana/api/v1/rules", grafanaListedAddr)
 		// nolint:gosec
 		resp, err := http.Get(u)
@@ -746,62 +749,66 @@ func TestIntegrationDeleteFolderWithRules(t *testing.T) {
 		b = re.ReplaceAll(b, []byte(`"updated":"2021-05-19T19:47:55Z"`))
 
 		expectedGetRulesResponseBody := fmt.Sprintf(`{
-			"default": [
-				{
-					"name": "arulegroup",
-					"interval": "1m",
-					"rules": [
-						{
-							"expr": "",
-							"for": "2m",
-							"labels": {
-								"label1": "val1"
-							},
-							"annotations": {
-								"annotation1": "val1"
-							},
-							"grafana_alert": {
-								"id": 1,
-								"orgId": 1,
-								"title": "rule under folder default",
-								"condition": "A",
-								"data": [
-									{
-										"refId": "A",
-										"queryType": "",
-										"relativeTimeRange": {
-											"from": 18000,
-											"to": 10800
-										},
-										"datasourceUid": "__expr__",
-										"model": {
-											"expression": "2 + 3 > 1",
-											"intervalMs": 1000,
-											"maxDataPoints": 43200,
-											"type": "math"
+				"default": [
+					{
+						"name": "arulegroup",
+						"interval": "1m",
+						"rules": [
+							{
+								"expr": "",
+								"for": "2m",
+								"labels": {
+									"label1": "val1"
+								},
+								"annotations": {
+									"annotation1": "val1"
+								},
+								"grafana_alert": {
+									"id": 1,
+									"orgId": 1,
+									"title": "rule under folder default",
+									"condition": "A",
+									"data": [
+										{
+											"refId": "A",
+											"queryType": "",
+											"relativeTimeRange": {
+												"from": 18000,
+												"to": 10800
+											},
+											"datasourceUid": "__expr__",
+											"model": {
+												"expression": "2 + 3 > 1",
+												"intervalMs": 1000,
+												"maxDataPoints": 43200,
+												"type": "math"
+											}
+										}
+									],
+									"updated": "2021-05-19T19:47:55Z",
+									"intervalSeconds": 60,
+									"is_paused": false,
+									"version": 1,
+									"uid": "",
+									"namespace_uid": %q,
+									"rule_group": "arulegroup",
+									"no_data_state": "NoData",
+									"exec_err_state": "Alerting",
+									"metadata": {
+										"editor_settings": {
+											"simplified_query_and_expressions_section": false,
+											"simplified_notifications_section": false
 										}
 									}
-								],
-								"updated": "2021-05-19T19:47:55Z",
-								"intervalSeconds": 60,
-								"is_paused": false,
-								"version": 1,
-								"uid": "",
-								"namespace_uid": %q,
-								"rule_group": "arulegroup",
-								"no_data_state": "NoData",
-								"exec_err_state": "Alerting"
+								}
 							}
-						}
-					]
-				}
-			]
-		}`, namespaceUID)
+						]
+					}
+				]
+			}`, namespaceUID)
 		assert.JSONEq(t, expectedGetRulesResponseBody, string(b))
-	}
-
-	// Next, the editor can not delete the folder because it contains Grafana 8 alerts.
-	{
+	})
+	t.Run("editor can not delete the folder because it contains Grafana 8 alerts", func(t *testing.T) {
 		u := fmt.Sprintf("http://editor:editor@%s/api/folders/%s", grafanaListedAddr, namespaceUID)
 		req, err := http.NewRequest(http.MethodDelete, u, nil)
 		require.NoError(t, err)
@@ -819,10 +826,8 @@ func TestIntegrationDeleteFolderWithRules(t *testing.T) {
 		err = json.Unmarshal(b, &errutilErr)
 		require.NoError(t, err)
 		assert.Equal(t, "Folder cannot be deleted: folder is not empty", errutilErr.Message)
-	}
-
-	// Next, the editor can delete the folder if forceDeleteRules is true.
-	{
+	})
+	t.Run("editor can delete the folder if forceDeleteRules is true", func(t *testing.T) {
 		u := fmt.Sprintf("http://editor:editor@%s/api/folders/%s?forceDeleteRules=true", grafanaListedAddr, namespaceUID)
 		req, err := http.NewRequest(http.MethodDelete, u, nil)
 		require.NoError(t, err)
@@ -836,10 +841,8 @@ func TestIntegrationDeleteFolderWithRules(t *testing.T) {
 		_, err = io.ReadAll(resp.Body)
 		require.NoError(t, err)
 		require.Equal(t, 200, resp.StatusCode)
-	}
-
-	// Finally, we ensure the rules were deleted.
-	{
+	})
+	t.Run("editor can delete rules", func(t *testing.T) {
 		u := fmt.Sprintf("http://editor:editor@%s/api/ruler/grafana/api/v1/rules", grafanaListedAddr)
 		// nolint:gosec
 		resp, err := http.Get(u)
@@ -853,7 +856,8 @@ func TestIntegrationDeleteFolderWithRules(t *testing.T) {
 
 		assert.Equal(t, 200, resp.StatusCode)
 		assert.JSONEq(t, "{}", string(b))
-	}
+	})
+	// TODO(@leonorfmartins): write tests for uni store when we are able to support it
 }
 
 func TestIntegrationAlertRuleCRUD(t *testing.T) {
@@ -1268,7 +1272,13 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 						  "namespace_uid":"nsuid",
 						  "rule_group":"arulegroup",
 						  "no_data_state":"NoData",
-						  "exec_err_state":"Alerting"
+						  "exec_err_state":"Alerting",
+						  "metadata": {
+						      "editor_settings": {
+							      "simplified_query_and_expressions_section": false,
+								  "simplified_notifications_section": false
+							  }
+						  }
 					   }
 					},
 					{
@@ -1304,7 +1314,13 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 						  "namespace_uid":"nsuid",
 						  "rule_group":"arulegroup",
 						  "no_data_state":"Alerting",
-						  "exec_err_state":"Alerting"
+						  "exec_err_state":"Alerting",
+						  "metadata": {
+						      "editor_settings": {
+							      "simplified_query_and_expressions_section": false,
+								  "simplified_notifications_section": false
+							  }
+						  }
 					   }
 					}
 				 ]
@@ -1612,7 +1628,13 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 		                  "namespace_uid":"nsuid",
 		                  "rule_group":"arulegroup",
 		                  "no_data_state":"Alerting",
-		                  "exec_err_state":"Alerting"
+		                  "exec_err_state":"Alerting",
+						  "metadata": {
+						      "editor_settings": {
+							      "simplified_query_and_expressions_section": false,
+								  "simplified_notifications_section": false
+							  }
+						  }
 		               }
 		            }
 		         ]
@@ -1721,8 +1743,14 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 					  "namespace_uid":"nsuid",
 					  "rule_group":"arulegroup",
 					  "no_data_state":"Alerting",
-					  "exec_err_state":"Alerting"
-				       }
+					  "exec_err_state":"Alerting",
+					  "metadata": {
+				        "editor_settings": {
+					      "simplified_query_and_expressions_section": false,
+						  "simplified_notifications_section": false
+					    }
+					   }
+				      }
 				    }
 				 ]
 			      }
@@ -1809,8 +1837,14 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 					  "namespace_uid":"nsuid",
 					  "rule_group":"arulegroup",
 					  "no_data_state":"Alerting",
-					  "exec_err_state":"Alerting"
-				       }
+					  "exec_err_state":"Alerting",
+					  "metadata": {
+				        "editor_settings": {
+					      "simplified_query_and_expressions_section": false,
+						  "simplified_notifications_section": false
+					    }
+					   }
+				      }
 				    }
 				 ]
 			      }
@@ -1974,7 +2008,7 @@ func TestIntegrationAlertmanagerCreateSilence(t *testing.T) {
 				StartsAt: util.Pointer(strfmt.DateTime(time.Now())),
 			},
 		},
-		expErr: "unable to upsert silence: silence invalid: invalid label matcher 0: invalid label name \"\": unable to create silence",
+		expErr: "unable to upsert silence: invalid silence: invalid label matcher 0: invalid label name \"\": unable to create silence",
 	}, {
 		name: "can't create silence for missing label value",
 		silence: apimodels.PostableSilence{
@@ -1991,7 +2025,7 @@ func TestIntegrationAlertmanagerCreateSilence(t *testing.T) {
 				StartsAt: util.Pointer(strfmt.DateTime(time.Now())),
 			},
 		},
-		expErr: "unable to upsert silence: silence invalid: at least one matcher must not match the empty string: unable to create silence",
+		expErr: "unable to upsert silence: invalid silence: at least one matcher must not match the empty string: unable to create silence",
 	}}
 
 	for _, tc := range cases {
@@ -2336,8 +2370,14 @@ func TestIntegrationQuota(t *testing.T) {
 						  "namespace_uid":"nsuid",
 						  "rule_group":"arulegroup",
 						  "no_data_state":"NoData",
-						  "exec_err_state":"Alerting"
-					       }
+						  "exec_err_state":"Alerting",
+						  "metadata": {
+						    "editor_settings": {
+							  "simplified_query_and_expressions_section": false,
+							  "simplified_notifications_section": false
+							 }
+						   }
+					      }
 					    }
 					 ]
 				      }
@@ -2419,7 +2459,11 @@ func TestIntegrationEval(t *testing.T) {
 								"nullable": true
 							  }
 							}
-						  ]
+						  ],
+						  "meta": {
+						    "type": "numeric-multi",
+							"typeVersion": [0, 1]
+						  }
 						},
 						"data": {
 						  "values": [
@@ -2477,7 +2521,11 @@ func TestIntegrationEval(t *testing.T) {
 								"nullable": true
 							  }
 							}
-						  ]
+						  ],
+						  "meta": {
+						    "type": "numeric-multi",
+							"typeVersion": [0, 1]
+						  }
 						},
 						"data": {
 						  "values": [
@@ -2568,7 +2616,11 @@ func TestIntegrationEval(t *testing.T) {
 								"nullable": true
 							  }
 							}
-						  ]
+						  ],
+						  "meta": {
+						    "type": "numeric-multi",
+							"typeVersion": [0, 1]
+						  }
 						},
 						"data": {
 						  "values": [

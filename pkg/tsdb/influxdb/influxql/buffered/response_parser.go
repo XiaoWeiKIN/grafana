@@ -1,6 +1,7 @@
 package buffered
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -23,17 +24,25 @@ func ResponseParse(buf io.ReadCloser, statusCode int, query *models.Query) *back
 func parse(buf io.Reader, statusCode int, query *models.Query) *backend.DataResponse {
 	response, jsonErr := parseJSON(buf)
 
+	if statusCode/100 != 2 {
+		errorStr := response.Error
+		if errorStr == "" {
+			errorStr = response.Message
+		}
+		return &backend.DataResponse{Error: fmt.Errorf("InfluxDB returned error: %s", errorStr)}
+	}
+
 	if jsonErr != nil {
 		return &backend.DataResponse{Error: jsonErr}
 	}
 
 	if response.Error != "" {
-		return &backend.DataResponse{Error: fmt.Errorf(response.Error)}
+		return &backend.DataResponse{Error: errors.New(response.Error)}
 	}
 
 	result := response.Results[0]
 	if result.Error != "" {
-		return &backend.DataResponse{Error: fmt.Errorf(result.Error)}
+		return &backend.DataResponse{Error: errors.New(result.Error)}
 	}
 
 	if query.ResultFormat == "table" {
@@ -269,12 +278,12 @@ func transformRowsForTimeSeries(rows []models.Row, query models.Query) data.Fram
 }
 
 func newFrameWithTimeField(row models.Row, column string, colIndex int, query models.Query, frameName []byte) *data.Frame {
-	var timeArray []time.Time
 	var floatArray []*float64
 	var stringArray []*string
 	var boolArray []*bool
 	valType := util.Typeof(row.Values, colIndex)
 
+	timeArray := make([]time.Time, 0, len(row.Values))
 	for _, valuePair := range row.Values {
 		timestamp, timestampErr := util.ParseTimestamp(valuePair[0])
 		// we only add this row if the timestamp is valid

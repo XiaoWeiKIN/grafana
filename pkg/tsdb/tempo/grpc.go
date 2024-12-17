@@ -2,7 +2,6 @@ package tempo
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"net"
@@ -48,7 +47,28 @@ func newGrpcClient(ctx context.Context, settings backend.DataSourceInstanceSetti
 	if err != nil {
 		return nil, fmt.Errorf("error getting dial options: %w", err)
 	}
-	clientConn, err := grpc.NewClient(onlyHost, dialOpts...)
+
+	// grpc.Dial() is deprecated in favor of grpc.NewClient(), but grpc.NewClient() changed the default resolver to dns from passthrough.
+	// This is a problem because the getDialOpts() function appends a custom dialer to the dial options to support Grafana Cloud PDC.
+	//
+	// See the following quote from the grpc package documentation:
+	//     One subtle difference between NewClient and Dial and DialContext is that the
+	//     former uses "dns" as the default name resolver, while the latter use
+	//     "passthrough" for backward compatibility.  This distinction should not matter
+	//     to most users, but could matter to legacy users that specify a custom dialer
+	//     and expect it to receive the target string directly.
+	// https://github.com/grpc/grpc-go/blob/fa274d77904729c2893111ac292048d56dcf0bb1/clientconn.go#L209
+	//
+	// Unfortunately, the passthrough resolver isn't exported by the grpc package, so we can't use it.
+	// The options are to continue using grpc.Dial() or implement a custom resolver.
+	// Since the go-grpc package maintainers intend to continue supporting grpc.Dial() through the 1.x series,
+	// we'll continue using grpc.Dial() until we have a compelling reason or bandwidth to implement the custom resolver.
+	// Reference: https://github.com/grpc/grpc-go/blob/f199062ef31ddda54152e1ca5e3d15fb63903dc3/clientconn.go#L204
+	//
+	// See this issue for more information: https://github.com/grpc/grpc-go/issues/7091
+	// Ignore the lint check as this fails the build and for the reasons above.
+	// nolint:staticcheck
+	clientConn, err := grpc.Dial(onlyHost, dialOpts...)
 	if err != nil {
 		logger.Error("Error dialing gRPC client", "error", err, "URL", settings.URL, "function", logEntrypoint())
 		return nil, err
@@ -71,7 +91,12 @@ func getDialOpts(ctx context.Context, settings backend.DataSourceInstanceSetting
 	dialOps = append(dialOps, grpc.WithChainStreamInterceptor(CustomHeadersStreamInterceptor(opts)))
 	if settings.BasicAuthEnabled {
 		// If basic authentication is enabled, it uses TLS transport credentials and sets the basic authentication header for each RPC call.
-		dialOps = append(dialOps, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
+		tls, err := httpclient.GetTLSConfig(opts)
+		if err != nil {
+			return nil, fmt.Errorf("failure in configuring tls for grpc: %w", err)
+		}
+
+		dialOps = append(dialOps, grpc.WithTransportCredentials(credentials.NewTLS(tls)))
 		dialOps = append(dialOps, grpc.WithPerRPCCredentials(&basicAuth{
 			Header: basicHeaderForAuth(opts.BasicAuth.User, opts.BasicAuth.Password),
 		}))

@@ -1,12 +1,12 @@
 // Core Grafana history https://github.com/grafana/grafana/blob/v11.0.0-preview/public/app/plugins/datasource/prometheus/querybuilder/components/PromQueryBuilder.tsx
 import { css } from '@emotion/css';
-import React, { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 
 import { DataSourceApi, PanelData } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
 import { EditorRow } from '@grafana/experimental';
 import { config } from '@grafana/runtime';
-import { Drawer } from '@grafana/ui';
+import { Drawer, useStyles2 } from '@grafana/ui';
 
 import { PrometheusDatasource } from '../../datasource';
 import promqlGrammar from '../../promql';
@@ -37,7 +37,7 @@ export interface PromQueryBuilderProps {
   showExplain: boolean;
 }
 
-export const PromQueryBuilder = React.memo<PromQueryBuilderProps>((props) => {
+export const PromQueryBuilder = memo<PromQueryBuilderProps>((props) => {
   const { datasource, query, onChange, onRunQuery, data, showExplain } = props;
   const [highlightedOp, setHighlightedOp] = useState<QueryBuilderOperation | undefined>();
   const [showDrawer, setShowDrawer] = useState<boolean>(false);
@@ -58,6 +58,7 @@ export const PromQueryBuilder = React.memo<PromQueryBuilderProps>((props) => {
       checkLlms();
     }
   }, [prometheusPromQAIL]);
+  const styles = useStyles2(getPromQueryBuilderStyles);
 
   return (
     <>
@@ -71,12 +72,19 @@ export const PromQueryBuilder = React.memo<PromQueryBuilderProps>((props) => {
           />
         </Drawer>
       )}
-      <EditorRow>
-        <MetricsLabelsSection query={query} onChange={onChange} datasource={datasource} />
-      </EditorRow>
+      <span className={styles.addaptToParent}>
+        <EditorRow>
+          <MetricsLabelsSection query={query} onChange={onChange} datasource={datasource} />
+        </EditorRow>
+      </span>
+
       {initHints.length ? (
-        <div className="query-row-break">
-          <div className="prom-query-field-info text-warning">
+        <div
+          className={css({
+            flexBasis: '100%',
+          })}
+        >
+          <div className="text-warning">
             {initHints[0].label}{' '}
             {initHints[0].fix ? (
               <button type="button" className={'text-warning'}>
@@ -146,5 +154,9 @@ export const PromQueryBuilder = React.memo<PromQueryBuilderProps>((props) => {
     </>
   );
 });
-
+const getPromQueryBuilderStyles = () => ({
+  addaptToParent: css({
+    maxWidth: '100%',
+  }),
+});
 PromQueryBuilder.displayName = 'PromQueryBuilder';

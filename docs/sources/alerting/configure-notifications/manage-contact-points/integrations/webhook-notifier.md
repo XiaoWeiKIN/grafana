@@ -19,9 +19,15 @@ labels:
     - cloud
     - enterprise
     - oss
-menuTitle: Webhook notifier
+menuTitle: Webhook
 title: Configure the webhook notifier for Alerting
-weight: 200
+weight: 165
+refs:
+  notification-templates:
+    - pattern: /docs/grafana/
+      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/
+    - pattern: /docs/grafana-cloud/
+      destination: /docs/grafana-cloud/alerting-and-irm/alerting/configure-notifications/template-notifications/
 ---
 
 # Configure the webhook notifier for Alerting
@@ -117,9 +123,9 @@ The webhook notification is a simple way to send information about a state chang
 | version           | string                    | Version of the payload                                                          |
 | groupKey          | string                    | Key that is used for grouping                                                   |
 | truncatedAlerts   | number                    | Number of alerts that were truncated                                            |
-| title             | string                    | **Will be deprecated soon**                                                     |
-| state             | string                    | **Will be deprecated soon**                                                     |
-| message           | string                    | **Will be deprecated soon**                                                     |
+| title             | string                    | Custom title                                                                    |
+| state             | string                    | State of the alert group (either `alerting` or `ok`)                            |
+| message           | string                    | Custom message                                                                  |
 
 ### Alert
 
@@ -134,17 +140,21 @@ The webhook notification is a simple way to send information about a state chang
 | generatorURL | string | URL of the alert rule in the Grafana UI                                            |
 | fingerprint  | string | The labels fingerprint, alarms with the same labels will have the same fingerprint |
 | silenceURL   | string | URL to silence the alert rule in the Grafana UI                                    |
-| dashboardURL | string | **Will be deprecated soon**                                                        |
-| panelURL     | string | **Will be deprecated soon**                                                        |
+| dashboardURL | string | A link to the Grafana Dashboard if the alert has a Dashboard UID annotation        |
+| panelURL     | string | A link to the panel if the alert has a Panel ID annotation                         |
 | imageURL     | string | URL of a screenshot of a panel assigned to the rule that created this notification |
 
 {{< admonition type="note" >}}
-Alert rules are not coupled to dashboards anymore therefore the fields related to dashboards `dashboardId` and `panelId` have been removed.
+
+You can customize the `title` and `message` fields using [notification templates](ref:notification-templates).
+
+However, you cannot customize webhook data structure or format, including JSON fields or sending data in XML, nor can you change the webhook HTTP headers.
+
 {{< /admonition >}}
 
 ## Procedure
 
-To create your webhook integration in Grafana Alerting, complete the following steps:
+To create your Webhook integration in Grafana Alerting, complete the following steps.
 
 1. Navigate to **Alerts & IRM** -> **Alerting** -> **Contact points**.
 1. Click **+ Add contact point**.
@@ -152,17 +162,20 @@ To create your webhook integration in Grafana Alerting, complete the following s
 1. From the Integration list, select **Webhook**.
 1. In the **URL** field, copy in your Webhook URL.
 1. Click **Test** to check that your integration works.
+
+   ** For Grafana Alertmanager only.**
+
 1. Click **Save contact point**.
 
 ## Next steps
 
-To add the contact point and integration you created to your default notification policy, complete the following steps.
+The Webhook contact point is ready to receive alert notifications.
 
-1. Navigate to **Alerts & IRM** -> **Alerting** -> **Notification policies**.
-1. In the **Default policy**, click the ellipsis icon (…) and then **Edit**.
-1. Change the default policy to the contact point you created.
-1. Click **Update default policy**.
+To add this contact point to your alert, complete the following steps.
 
-{{< admonition type="note" >}}
-If you have more than one contact point, add a new notification policy rather than edit the default one, so you can route specific alerts to your webhook.
-{{< /admonition >}}
+1. In Grafana, navigate to **Alerting** > **Alert rules**.
+1. Edit or create a new alert rule.
+1. Scroll down to the **Configure labels and notifications** section.
+1. Under Notifications, click **Select contact point**.
+1. From the drop-down menu, select the previously created contact point.
+1. **Click Save rule and exit**.

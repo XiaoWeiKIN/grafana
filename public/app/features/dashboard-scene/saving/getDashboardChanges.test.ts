@@ -1,7 +1,7 @@
 import { AdHocVariableModel } from '@grafana/data';
 import { Dashboard, Panel } from '@grafana/schema';
 
-import { adHocVariableFiltersEqual, getDashboardChanges, getPanelChanges } from './getDashboardChanges';
+import { adHocVariableFiltersEqual, getRawDashboardChanges, getPanelChanges } from './getDashboardChanges';
 
 describe('adHocVariableFiltersEqual', () => {
   it('should compare empty filters', () => {
@@ -57,6 +57,35 @@ describe('adHocVariableFiltersEqual', () => {
       )
     ).toBeFalsy();
   });
+
+  describe('when filter property is undefined', () => {
+    afterAll(() => {
+      jest.clearAllMocks();
+    });
+
+    it('should compare two adhoc variables where both are missing the filter property and return true', () => {
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementationOnce(() => {});
+      expect(
+        adHocVariableFiltersEqual({} as unknown as AdHocVariableModel, {} as unknown as AdHocVariableModel)
+      ).toBeTruthy();
+
+      expect(warnSpy).toHaveBeenCalledWith('Adhoc variable filter property is undefined');
+    });
+
+    it('should compare two adhoc variables where one has no filter property and return false', () => {
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementationOnce(() => {});
+      expect(
+        adHocVariableFiltersEqual(
+          {} as unknown as AdHocVariableModel,
+          {
+            filters: [{ value: 'asdio', key: 'qwe', operator: 'wer' }],
+          } as unknown as AdHocVariableModel
+        )
+      ).toBeFalsy();
+
+      expect(warnSpy).toHaveBeenCalledWith('Adhoc variable filter property is undefined');
+    });
+  });
 });
 
 describe('getDashboardChanges', () => {
@@ -85,6 +114,7 @@ describe('getDashboardChanges', () => {
       ],
     },
   };
+
   it('should return the correct result when no changes', () => {
     const changed = { ...initial };
 
@@ -104,7 +134,7 @@ describe('getDashboardChanges', () => {
       hasRefreshChange: false,
     };
 
-    const result = getDashboardChanges(initial, changed, false, false, false);
+    const result = getRawDashboardChanges(initial, changed, false, false, false);
 
     expect(result).toEqual(expectedChanges);
   });
@@ -135,7 +165,7 @@ describe('getDashboardChanges', () => {
       hasRefreshChange: false,
     };
 
-    const result = getDashboardChanges(newDashInitial, changed, false, false, false);
+    const result = getRawDashboardChanges(newDashInitial, changed, false, false, false);
 
     expect(result).toEqual(expectedChanges);
   });
@@ -165,7 +195,7 @@ describe('getDashboardChanges', () => {
       hasRefreshChange: false,
     };
 
-    const result = getDashboardChanges(initial, changed, false, false, false);
+    const result = getRawDashboardChanges(initial, changed, false, false, false);
 
     expect(result).toEqual(expectedChanges);
   });
@@ -206,7 +236,7 @@ describe('getDashboardChanges', () => {
       hasRefreshChange: false,
     };
 
-    const result = getDashboardChanges(initial, changed, true, false, false);
+    const result = getRawDashboardChanges(initial, changed, true, false, false);
 
     expect(result).toEqual(expectedChanges);
   });
@@ -233,7 +263,7 @@ describe('getDashboardChanges', () => {
       hasRefreshChange: true,
     };
 
-    const result = getDashboardChanges(initial, changed, false, false, false);
+    const result = getRawDashboardChanges(initial, changed, false, false, false);
 
     expect(result).toEqual(expectedChanges);
   });
@@ -271,7 +301,7 @@ describe('getDashboardChanges', () => {
       hasRefreshChange: true,
     };
 
-    const result = getDashboardChanges(initial, changed, false, false, true);
+    const result = getRawDashboardChanges(initial, changed, false, false, true);
 
     expect(result).toEqual(expectedChanges);
   });
@@ -311,7 +341,7 @@ describe('getDashboardChanges', () => {
       hasRefreshChange: false,
     };
 
-    const result = getDashboardChanges(initial, changed, false, false, false);
+    const result = getRawDashboardChanges(initial, changed, false, false, false);
 
     expect(result).toEqual(expectedChanges);
   });
@@ -362,7 +392,7 @@ describe('getDashboardChanges', () => {
       hasRefreshChange: false,
     };
 
-    const result = getDashboardChanges(initial, changed, false, true, false);
+    const result = getRawDashboardChanges(initial, changed, false, true, false);
 
     expect(result).toEqual(expectedChanges);
   });

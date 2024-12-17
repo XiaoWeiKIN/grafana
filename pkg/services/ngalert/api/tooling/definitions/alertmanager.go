@@ -2,7 +2,6 @@ package definitions
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/grafana/alerting/definition"
+	alertingmodels "github.com/grafana/alerting/models"
 )
 
 // swagger:route POST /alertmanager/grafana/config/api/v1/alerts alertmanager RoutePostGrafanaAlertingConfig
@@ -473,7 +473,6 @@ func NewGettableStatus(cfg *PostableApiAlertingConfig) *GettableStatus {
 	}
 }
 
-// swagger:model postableSilence
 type PostableSilence = amv2.PostableSilence
 
 // swagger:model postSilencesOKBody
@@ -485,7 +484,6 @@ type PostSilencesOKBody struct { // vendored from "github.com/prometheus/alertma
 // swagger:model gettableSilences
 type GettableSilences = amv2.GettableSilences
 
-// swagger:model gettableSilence
 type GettableSilence = amv2.GettableSilence
 
 // swagger:model gettableGrafanaSilence
@@ -540,26 +538,22 @@ type GettableGrafanaSilences []*GettableGrafanaSilence
 // swagger:model gettableAlerts
 type GettableAlerts = amv2.GettableAlerts
 
-// swagger:model gettableAlert
 type GettableAlert = amv2.GettableAlert
 
 // swagger:model alertGroups
 type AlertGroups = amv2.AlertGroups
 
-// swagger:model alertGroup
 type AlertGroup = amv2.AlertGroup
 
-// swagger:model receiver
-type Receiver = amv2.Receiver
+type Receiver = alertingmodels.Receiver
 
 // swagger:response receiversResponse
 type ReceiversResponse struct {
 	// in:body
-	Body []amv2.Receiver
+	Body []alertingmodels.Receiver
 }
 
-// swagger:model integration
-type Integration = amv2.Integration
+type Integration = alertingmodels.Integration
 
 // swagger:parameters RouteGetAMAlerts RouteGetAMAlertGroups RouteGetGrafanaAMAlerts RouteGetGrafanaAMAlertGroups
 type AlertsParams struct {
@@ -685,19 +679,11 @@ func (c *PostableUserConfig) Decrypt(decryptFn func(payload []byte) ([]byte, err
 	// Iterate through receivers and decrypt secure settings.
 	for _, rcv := range newCfg.AlertmanagerConfig.Receivers {
 		for _, gmr := range rcv.PostableGrafanaReceivers.GrafanaManagedReceivers {
-			for k, v := range gmr.SecureSettings {
-				decoded, err := base64.StdEncoding.DecodeString(v)
-				if err != nil {
-					return PostableUserConfig{}, fmt.Errorf("failed to decode value for key '%s': %w", k, err)
-				}
-
-				decrypted, err := decryptFn(decoded)
-				if err != nil {
-					return PostableUserConfig{}, fmt.Errorf("failed to decrypt value for key '%s': %w", k, err)
-				}
-
-				gmr.SecureSettings[k] = string(decrypted)
+			decrypted, err := gmr.DecryptSecureSettings(decryptFn)
+			if err != nil {
+				return PostableUserConfig{}, err
 			}
+			gmr.SecureSettings = decrypted
 		}
 	}
 	return *newCfg, nil

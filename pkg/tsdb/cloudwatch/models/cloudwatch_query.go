@@ -310,7 +310,7 @@ func (q *CloudWatchQuery) migrateLegacyQuery(query metricsDataQuery) {
 func (q *CloudWatchQuery) validateAndSetDefaults(refId string, metricsDataQuery metricsDataQuery, startTime, endTime time.Time,
 	defaultRegionValue string, crossAccountQueryingEnabled bool) error {
 	if metricsDataQuery.Statistic == nil && metricsDataQuery.Statistics == nil {
-		return fmt.Errorf("query must have either statistic or statistics field")
+		return backend.DownstreamError(fmt.Errorf("query must have either statistic or statistics field"))
 	}
 
 	var err error
@@ -384,7 +384,11 @@ func (q *CloudWatchQuery) validateAndSetDefaults(refId string, metricsDataQuery 
 func getStatistic(query metricsDataQuery) string {
 	// If there's not a statistic property in the json, we know it's the legacy format and then it has to be migrated
 	if query.Statistic == nil {
-		return query.Statistics[0]
+		if len(query.Statistics) > 0 {
+			return query.Statistics[0]
+		}
+		// if there isn't a statistic property in the legacy format fall back to Average
+		return "Average"
 	}
 	return *query.Statistic
 }

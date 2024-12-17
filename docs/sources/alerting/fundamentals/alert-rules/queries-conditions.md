@@ -43,7 +43,7 @@ refs:
 
 In Grafana, queries fetch and transform data from [data sources,](ref:data-sources) which include databases like MySQL or PostgreSQL, time series databases like Prometheus or InfluxDB, and services like Amazon CloudWatch or Azure Monitor.
 
-A query specifies the desired data to retrieve from a data source and applies relevant filters or transformations. Query languages or syntax specific to the chosen data source are utilized for constructing these queries.
+A query specifies the data to extract from a data source, with the syntax varying based on the type of data source used.
 
 In Alerting, an alert rule defines of one or more queries and expressions that select the data you want to measure and a [condition](#alert-condition) that needs to be met before an alert rule fires.
 
@@ -111,6 +111,12 @@ Classic conditions exist mainly for compatibility reasons and should be avoided 
 
 Classic condition checks if any time series data matches the alert condition. It always produce one alert instance only, no matter how many time series meet the condition.
 
+| Condition operators | How it works                                                                                                                                                                                                                                                |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| and                 | Two conditions before and after must be true for the overall condition to be true.                                                                                                                                                                          |
+| or                  | If one of conditions before and after are true, the overall condition is true.                                                                                                                                                                              |
+| logic-or            | If the condition before `logic-or` is true, the overall condition is immediately true, without evaluating subsequent conditions. For instance, `TRUE and TRUE logic-or FALSE and FALSE` evaluate to `TRUE`, because the preceding condition returns `TRUE`. |
+
 ## Aggregations
 
 Grafana Alerting provides the following aggregation functions to enable you to further refine your query.
@@ -136,7 +142,7 @@ These functions are available for **Reduce** and **Classic condition** expressio
 
 An alert condition is the query or expression that determines whether the alert fires or not depending on the value it yields. There can be only one condition which determines the triggering of the alert.
 
-After you have defined your queries and/or expressions, choose one of them as the alert rule condition. By default, the last expression added is used as the alert condition.
+After you have defined your queries and expressions, choose one of them as the alert rule condition. By default, the last expression added is used as the alert condition.
 
 When the queried data satisfies the defined condition, Grafana triggers the associated alert, which can be configured to send notifications through various channels like email, Slack, or PagerDuty.
 

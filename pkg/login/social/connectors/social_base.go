@@ -17,9 +17,9 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/login/social"
-	"github.com/grafana/grafana/pkg/services/auth/identity"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/org"
 	"github.com/grafana/grafana/pkg/services/ssosettings/validation"
@@ -35,7 +35,7 @@ type SocialBase struct {
 	log           log.Logger
 	features      featuremgmt.FeatureToggles
 	orgRoleMapper *OrgRoleMapper
-	orgMappingCfg *MappingConfiguration
+	orgMappingCfg MappingConfiguration
 }
 
 func newSocialBase(name string,
@@ -43,7 +43,6 @@ func newSocialBase(name string,
 	info *social.OAuthInfo,
 	features featuremgmt.FeatureToggles,
 	cfg *setting.Cfg,
-
 ) *SocialBase {
 	logger := log.New("oauth." + name)
 
@@ -153,15 +152,6 @@ func (s *SocialBase) extractRoleAndAdminOptional(rawJSON []byte, groups []string
 	return "", false, nil
 }
 
-func (s *SocialBase) extractRoleAndAdmin(rawJSON []byte, groups []string) (org.RoleType, bool, error) {
-	role, gAdmin, err := s.extractRoleAndAdminOptional(rawJSON, groups)
-	if role == "" {
-		role = s.defaultRole()
-	}
-
-	return role, gAdmin, err
-}
-
 func (s *SocialBase) searchRole(rawJSON []byte, groups []string) (org.RoleType, bool) {
 	role, err := util.SearchJSONForStringAttr(s.info.RoleAttributePath, rawJSON)
 	if err == nil && role != "" {
@@ -184,18 +174,6 @@ func (s *SocialBase) extractOrgs(rawJSON []byte) ([]string, error) {
 	}
 
 	return util.SearchJSONForStringSliceAttr(s.info.OrgAttributePath, rawJSON)
-}
-
-// defaultRole returns the default role for the user based on the autoAssignOrgRole setting
-// if legacy is enabled "" is returned indicating the previous role assignment is used.
-func (s *SocialBase) defaultRole() org.RoleType {
-	if s.cfg.AutoAssignOrgRole != "" {
-		s.log.Debug("No role found, returning default.")
-		return org.RoleType(s.cfg.AutoAssignOrgRole)
-	}
-
-	// should never happen
-	return org.RoleViewer
 }
 
 func (s *SocialBase) isGroupMember(groups []string) bool {
@@ -280,9 +258,11 @@ func getRoleFromSearch(role string) (org.RoleType, bool) {
 	return org.RoleType(cases.Title(language.Und).String(role)), false
 }
 
-func validateInfo(info *social.OAuthInfo, requester identity.Requester) error {
+func validateInfo(info *social.OAuthInfo, oldInfo *social.OAuthInfo, requester identity.Requester) error {
 	return validation.Validate(info, requester,
 		validation.RequiredValidator(info.ClientId, "Client Id"),
-		validation.AllowAssignGrafanaAdminValidator,
-		validation.SkipOrgRoleSyncAllowAssignGrafanaAdminValidator)
+		validation.AllowAssignGrafanaAdminValidator(info, oldInfo, requester),
+		validation.SkipOrgRoleSyncAllowAssignGrafanaAdminValidator,
+		validation.OrgAttributePathValidator(info, oldInfo, requester),
+		validation.OrgMappingValidator(info, oldInfo, requester))
 }

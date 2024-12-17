@@ -1,7 +1,7 @@
 import { css } from '@emotion/css';
 import { useId } from '@react-aria/utils';
 import pluralize from 'pluralize';
-import React, { useCallback, useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useAsync } from 'react-use';
 
 import { DataQuery, GrafanaTheme2, SelectableValue, DataTopic, QueryEditorProps } from '@grafana/data';
@@ -9,7 +9,7 @@ import { OperationsEditorRow } from '@grafana/experimental';
 import { Field, Select, useStyles2, Spinner, RadioButtonGroup, Stack, InlineSwitch } from '@grafana/ui';
 import config from 'app/core/config';
 import { getDashboardSrv } from 'app/features/dashboard/services/DashboardSrv';
-import { PanelModel } from 'app/features/dashboard/state';
+import { PanelModel } from 'app/features/dashboard/state/PanelModel';
 import { DashboardScene } from 'app/features/dashboard-scene/scene/DashboardScene';
 import { getDatasourceSrv } from 'app/features/plugins/datasource_srv';
 import { filterPanelDataToQuery } from 'app/features/query/components/QueryEditorRow';
@@ -23,9 +23,11 @@ function getQueryDisplayText(query: DataQuery): string {
 
 function isPanelInEdit(panelId: number, panelInEditId?: number) {
   let idToCompareWith = panelInEditId;
+
   if (window.__grafanaSceneContext && window.__grafanaSceneContext instanceof DashboardScene) {
-    idToCompareWith = window.__grafanaSceneContext.state.editPanel?.state.panelId;
+    idToCompareWith = window.__grafanaSceneContext.state.editPanel?.getPanelId();
   }
+
   return panelId === idToCompareWith;
 }
 

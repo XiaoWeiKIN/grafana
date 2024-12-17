@@ -12,6 +12,9 @@ export const queryParamsToPreserve: { [key: string]: boolean } = {
   kiosk: true,
   autofitpanels: true,
   orgId: true,
+  '_dash.hideTimePicker': true,
+  '_dash.hideVariables': true,
+  '_dash.hideLinks': true,
 };
 
 export interface PlaylistSrvState {
@@ -22,10 +25,10 @@ export class PlaylistSrv extends StateManagerBase<PlaylistSrvState> {
   private nextTimeoutId: ReturnType<typeof setTimeout> | undefined;
   private urls: string[] = []; // the URLs we need to load
   private index = 0;
-  private declare interval: number;
-  private declare startUrl: string;
+  declare private interval: number;
+  declare private startUrl: string;
   private numberOfLoops = 0;
-  private declare validPlaylistUrl: string;
+  declare private validPlaylistUrl: string;
   private locationListenerUnsub?: () => void;
   private api: PlaylistAPI;
 

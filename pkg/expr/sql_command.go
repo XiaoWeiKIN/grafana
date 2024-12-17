@@ -7,12 +7,11 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/data"
-	"github.com/scottlepp/go-duck/duck"
 
+	"github.com/grafana/grafana/pkg/apimachinery/errutil"
 	"github.com/grafana/grafana/pkg/expr/mathexp"
 	"github.com/grafana/grafana/pkg/expr/sql"
 	"github.com/grafana/grafana/pkg/infra/tracing"
-	"github.com/grafana/grafana/pkg/util/errutil"
 )
 
 // SQLCommand is an expression to run SQL over results
@@ -94,11 +93,11 @@ func (gr *SQLCommand) Execute(ctx context.Context, now time.Time, vars mathexp.V
 
 	rsp := mathexp.Results{}
 
-	duckDB := duck.NewInMemoryDB()
+	db := sql.NewInMemoryDB()
 	var frame = &data.Frame{}
 
 	logger.Debug("Executing query", "query", gr.query, "frames", len(allFrames))
-	err := duckDB.QueryFramesInto(gr.refID, gr.query, allFrames, frame)
+	err := db.QueryFramesInto(gr.refID, gr.query, allFrames, frame)
 	if err != nil {
 		logger.Error("Failed to query frames", "error", err.Error())
 		rsp.Error = err

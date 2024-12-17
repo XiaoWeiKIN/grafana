@@ -1,14 +1,21 @@
 import { trim } from 'lodash';
-import React, { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import * as React from 'react';
 
 import { CoreApp, isValidDuration, isValidGrafanaDuration, SelectableValue } from '@grafana/data';
 import { EditorField, EditorRow, QueryOptionGroup } from '@grafana/experimental';
 import { config, reportInteraction } from '@grafana/runtime';
 import { Alert, AutoSizeInput, RadioButtonGroup, Select } from '@grafana/ui';
 
-import { preprocessMaxLines, queryTypeOptions, RESOLUTION_OPTIONS } from '../../components/LokiOptionFields';
+import {
+  getQueryDirectionLabel,
+  preprocessMaxLines,
+  queryDirections,
+  queryTypeOptions,
+  RESOLUTION_OPTIONS,
+} from '../../components/LokiOptionFields';
 import { getLokiQueryType, isLogsQuery } from '../../queryUtils';
-import { LokiQuery, LokiQueryType, QueryStats } from '../../types';
+import { LokiQuery, LokiQueryDirection, LokiQueryType, QueryStats } from '../../types';
 
 export interface Props {
   query: LokiQuery;
@@ -23,8 +30,22 @@ export const LokiQueryBuilderOptions = React.memo<Props>(
   ({ app, query, onChange, onRunQuery, maxLines, queryStats }) => {
     const [splitDurationValid, setSplitDurationValid] = useState(true);
 
+    useEffect(() => {
+      if (query.step && !isValidGrafanaDuration(`${query.step}`) && parseInt(query.step, 10)) {
+        onChange({
+          ...query,
+          step: `${parseInt(query.step, 10)}s`,
+        });
+      }
+    }, [onChange, query]);
+
     const onQueryTypeChange = (value: LokiQueryType) => {
       onChange({ ...query, queryType: value });
+      onRunQuery();
+    };
+
+    const onQueryDirectionChange = (value: LokiQueryDirection) => {
+      onChange({ ...query, direction: value });
       onRunQuery();
     };
 
@@ -66,21 +87,32 @@ export const LokiQueryBuilderOptions = React.memo<Props>(
       onRunQuery();
     }
 
-    const queryType = getLokiQueryType(query);
+    let queryType = getLokiQueryType(query);
     const isLogQuery = isLogsQuery(query.expr);
+    const filteredQueryTypeOptions = isLogQuery
+      ? queryTypeOptions.filter((o) => o.value !== LokiQueryType.Instant)
+      : queryTypeOptions;
+
+    const queryDirection = query.direction ?? LokiQueryDirection.Backward;
+
+    // if the state's queryType is still Instant, trigger a change to range for log queries
+    if (isLogQuery && queryType === LokiQueryType.Instant) {
+      onChange({ ...query, queryType: LokiQueryType.Range });
+      queryType = LokiQueryType.Range;
+    }
 
     const isValidStep = useMemo(() => {
-      if (!query.step || isValidGrafanaDuration(query.step) || !isNaN(Number(query.step))) {
+      if (!query.step) {
         return true;
       }
-      return false;
+      return typeof query.step === 'string' && isValidGrafanaDuration(query.step) && !isNaN(parseInt(query.step, 10));
     }, [query.step]);
 
     return (
       <EditorRow>
         <QueryOptionGroup
           title="Options"
-          collapsedInfo={getCollapsedInfo(query, queryType, maxLines, isLogQuery, isValidStep)}
+          collapsedInfo={getCollapsedInfo(query, queryType, maxLines, isLogQuery, isValidStep, queryDirection)}
           queryStats={queryStats}
         >
           <EditorField
@@ -95,20 +127,27 @@ export const LokiQueryBuilderOptions = React.memo<Props>(
               onCommitChange={onLegendFormatChanged}
             />
           </EditorField>
-          <EditorField label="Type">
-            <RadioButtonGroup options={queryTypeOptions} value={queryType} onChange={onQueryTypeChange} />
-          </EditorField>
-          {isLogQuery && (
-            <EditorField label="Line limit" tooltip="Upper limit for number of log lines returned by query.">
-              <AutoSizeInput
-                className="width-4"
-                placeholder={maxLines.toString()}
-                type="number"
-                min={0}
-                defaultValue={query.maxLines?.toString() ?? ''}
-                onCommitChange={onMaxLinesChange}
-              />
+          {filteredQueryTypeOptions.length > 1 && (
+            <EditorField label="Type">
+              <RadioButtonGroup options={filteredQueryTypeOptions} value={queryType} onChange={onQueryTypeChange} />
             </EditorField>
+          )}
+          {isLogQuery && (
+            <>
+              <EditorField label="Line limit" tooltip="Upper limit for number of log lines returned by query.">
+                <AutoSizeInput
+                  className="width-4"
+                  placeholder={maxLines.toString()}
+                  type="number"
+                  min={0}
+                  defaultValue={query.maxLines?.toString() ?? ''}
+                  onCommitChange={onMaxLinesChange}
+                />
+              </EditorField>
+              <EditorField label="Direction" tooltip="Direction to search for logs.">
+                <RadioButtonGroup options={queryDirections} value={queryDirection} onChange={onQueryDirectionChange} />
+              </EditorField>
+            </>
           )}
           {!isLogQuery && (
             <>
@@ -122,7 +161,7 @@ export const LokiQueryBuilderOptions = React.memo<Props>(
                   className="width-6"
                   placeholder={'auto'}
                   type="string"
-                  defaultValue={query.step ?? ''}
+                  value={query.step ?? ''}
                   onCommitChange={onStepChange}
                 />
               </EditorField>
@@ -174,7 +213,8 @@ function getCollapsedInfo(
   queryType: LokiQueryType,
   maxLines: number,
   isLogQuery: boolean,
-  isValidStep: boolean
+  isValidStep: boolean,
+  direction: LokiQueryDirection
 ): string[] {
   const queryTypeLabel = queryTypeOptions.find((x) => x.value === queryType);
   const resolutionLabel = RESOLUTION_OPTIONS.find((x) => x.value === (query.resolution ?? 1));
@@ -189,9 +229,8 @@ function getCollapsedInfo(
 
   if (isLogQuery) {
     items.push(`Line limit: ${query.maxLines ?? maxLines}`);
-  }
-
-  if (!isLogQuery) {
+    items.push(`Direction: ${getQueryDirectionLabel(direction)}`);
+  } else {
     if (query.step) {
       items.push(`Step: ${isValidStep ? query.step : 'Invalid value'}`);
     }

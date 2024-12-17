@@ -35,7 +35,7 @@ This section provides minimum hardware and software requirements.
 
 - Disk space: 1 GB
 - Memory: 750 MiB (approx 750 MB)
-- CPU: 250m (approx 2.5 cores)
+- CPU: 250m (approx 0.25 cores)
 
 ### Supported databases
 
@@ -51,7 +51,10 @@ Enable port `3000` in your network environment, as this is the Grafana default p
 
 ## Deploy Grafana OSS on Kubernetes
 
-This section explains how to install Grafana OSS using Kubernetes. If you want to install Grafana Enterprise on Kubernetes, refer to [Deploy Grafana Enterprise on Kubernetes](#deploy-grafana-enterprise-on-kubernetes).
+This section explains how to install Grafana OSS using Kubernetes.
+{{% admonition type="note" %}}
+If you want to install Grafana Enterprise on Kubernetes, refer to [Deploy Grafana Enterprise on Kubernetes](#deploy-grafana-enterprise-on-kubernetes).
+{{% /admonition %}}
 
 If you deploy an application in Kubernetes, it will use the default namespace which may already have other applications running. This can result in conflicts and other issues.
 

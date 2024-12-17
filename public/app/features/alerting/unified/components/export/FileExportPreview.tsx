@@ -1,12 +1,13 @@
 import { css } from '@emotion/css';
 import saveAs from 'file-saver';
-import React, { useCallback, useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
+import * as React from 'react';
 import AutoSizer from 'react-virtualized-auto-sizer';
 
 import { GrafanaTheme2 } from '@grafana/data';
 import { Alert, Button, ClipboardButton, CodeEditor, TextLink, useStyles2 } from '@grafana/ui';
 
-import { allGrafanaExportProviders, ExportFormats, ExportProvider, ProvisioningType } from './providers';
+import { ExportFormats, ExportProvider, ProvisioningType, allGrafanaExportProviders } from './providers';
 
 interface FileExportPreviewProps {
   format: ExportFormats;

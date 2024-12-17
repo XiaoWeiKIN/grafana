@@ -1,5 +1,5 @@
 import { css } from '@emotion/css';
-import React, { useEffect, useMemo, useState } from 'react';
+import { createElement, useEffect, useMemo, useState } from 'react';
 import { mergeMap } from 'rxjs/operators';
 
 import {
@@ -21,7 +21,7 @@ interface TransformationEditorProps {
   debugMode?: boolean;
   index: number;
   data: DataFrame[];
-  uiConfig: TransformerRegistryItem<any>;
+  uiConfig: TransformerRegistryItem;
   configs: TransformationsEditorTransformation[];
   onChange: (index: number, config: DataTransformerConfig) => void;
   toggleShowDebug: () => void;
@@ -69,7 +69,7 @@ export const TransformationEditor = ({
 
   const editor = useMemo(
     () =>
-      React.createElement(uiConfig.editor, {
+      createElement(uiConfig.editor, {
         options: { ...uiConfig.transformation.defaultOptions, ...config.transformation.options },
         input,
         onChange: (opts) => {
