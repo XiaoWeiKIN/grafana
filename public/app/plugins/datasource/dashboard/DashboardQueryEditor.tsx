@@ -5,7 +5,7 @@ import { useCallback, useMemo } from 'react';
 import { useAsync } from 'react-use';
 
 import { DataQuery, GrafanaTheme2, SelectableValue, DataTopic, QueryEditorProps } from '@grafana/data';
-import { OperationsEditorRow } from '@grafana/experimental';
+import { OperationsEditorRow } from '@grafana/plugin-ui';
 import { Field, Select, useStyles2, Spinner, RadioButtonGroup, Stack, InlineSwitch } from '@grafana/ui';
 import config from 'app/core/config';
 import { getDashboardSrv } from 'app/features/dashboard/services/DashboardSrv';
@@ -108,6 +108,13 @@ export function DashboardQueryEditor({ data, query, onChange, onRunQuery }: Prop
     [query, onUpdateQuery]
   );
 
+  const onAdHocFiltersToggle = useCallback(() => {
+    onUpdateQuery({
+      ...query,
+      adHocFiltersEnabled: !query.adHocFiltersEnabled,
+    });
+  }, [query, onUpdateQuery]);
+
   const isMixedDSWithDashboardQueries = (panel: PanelModel) => {
     return (
       panel.datasource?.uid === MIXED_DATASOURCE_NAME &&
@@ -195,6 +202,16 @@ export function DashboardQueryEditor({ data, query, onChange, onRunQuery }: Prop
           {showTransforms && (
             <Field label="Transform" description="Apply transformations from the source panel">
               <InlineSwitch value={Boolean(query.withTransforms)} onChange={onTransformToggle} />
+            </Field>
+          )}
+
+          {config.featureToggles.dashboardDsAdHocFiltering && (
+            <Field
+              label="AdHoc Filters"
+              description="Apply --Dashboard-- data source AdHoc filters to this panel"
+              noMargin
+            >
+              <InlineSwitch value={Boolean(query.adHocFiltersEnabled)} onChange={onAdHocFiltersToggle} />
             </Field>
           )}
         </Stack>

@@ -132,22 +132,26 @@ type Service struct {
 }
 
 type datasourceInfo struct {
-	id                 int64
-	updated            time.Time
-	url                string
-	authenticationType string
-	defaultProject     string
-	clientEmail        string
-	tokenUri           string
-	services           map[string]datasourceService
-	privateKey         string
+	id                          int64
+	updated                     time.Time
+	url                         string
+	authenticationType          string
+	defaultProject              string
+	clientEmail                 string
+	tokenUri                    string
+	services                    map[string]datasourceService
+	privateKey                  string
+	usingImpersonation          bool
+	serviceAccountToImpersonate string
 }
 
 type datasourceJSONData struct {
-	AuthenticationType string `json:"authenticationType"`
-	DefaultProject     string `json:"defaultProject"`
-	ClientEmail        string `json:"clientEmail"`
-	TokenURI           string `json:"tokenUri"`
+	AuthenticationType          string `json:"authenticationType"`
+	DefaultProject              string `json:"defaultProject"`
+	ClientEmail                 string `json:"clientEmail"`
+	TokenURI                    string `json:"tokenUri"`
+	UsingImpersonation          bool   `json:"usingImpersonation"`
+	ServiceAccountToImpersonate string `json:"serviceAccountToImpersonate"`
 }
 
 type datasourceService struct {
@@ -168,14 +172,16 @@ func newInstanceSettings(httpClientProvider httpclient.Provider) datasource.Inst
 		}
 
 		dsInfo := &datasourceInfo{
-			id:                 settings.ID,
-			updated:            settings.Updated,
-			url:                settings.URL,
-			authenticationType: jsonData.AuthenticationType,
-			defaultProject:     jsonData.DefaultProject,
-			clientEmail:        jsonData.ClientEmail,
-			tokenUri:           jsonData.TokenURI,
-			services:           map[string]datasourceService{},
+			id:                          settings.ID,
+			updated:                     settings.Updated,
+			url:                         settings.URL,
+			authenticationType:          jsonData.AuthenticationType,
+			defaultProject:              jsonData.DefaultProject,
+			clientEmail:                 jsonData.ClientEmail,
+			tokenUri:                    jsonData.TokenURI,
+			usingImpersonation:          jsonData.UsingImpersonation,
+			serviceAccountToImpersonate: jsonData.ServiceAccountToImpersonate,
+			services:                    map[string]datasourceService{},
 		}
 
 		dsInfo.privateKey, err = utils.GetPrivateKey(&settings)
@@ -387,11 +393,11 @@ func queryModel(query backend.DataQuery) (grafanaQuery, error) {
 
 func (s *Service) buildQueryExecutors(logger log.Logger, req *backend.QueryDataRequest) ([]cloudMonitoringQueryExecutor, error) {
 	cloudMonitoringQueryExecutors := make([]cloudMonitoringQueryExecutor, 0, len(req.Queries))
-	startTime := req.Queries[0].TimeRange.From
-	endTime := req.Queries[0].TimeRange.To
-	durationSeconds := int(endTime.Sub(startTime).Seconds())
 
-	for _, query := range req.Queries {
+	for index, query := range req.Queries {
+		startTime := req.Queries[index].TimeRange.From
+		endTime := req.Queries[index].TimeRange.To
+		durationSeconds := int(endTime.Sub(startTime).Seconds())
 		q, err := queryModel(query)
 		if err != nil {
 			return nil, fmt.Errorf("could not unmarshal CloudMonitoringQuery json: %w", err)
@@ -401,8 +407,9 @@ func (s *Service) buildQueryExecutors(logger log.Logger, req *backend.QueryDataR
 		switch query.QueryType {
 		case string(dataquery.QueryTypeTIMESERIESLIST), string(dataquery.QueryTypeANNOTATION):
 			cmtsf := &cloudMonitoringTimeSeriesList{
-				refID:   query.RefID,
-				aliasBy: q.AliasBy,
+				refID:     query.RefID,
+				aliasBy:   q.AliasBy,
+				timeRange: req.Queries[index].TimeRange,
 			}
 			if q.TimeSeriesList.View == nil || *q.TimeSeriesList.View == "" {
 				fullString := "FULL"
@@ -417,7 +424,7 @@ func (s *Service) buildQueryExecutors(logger log.Logger, req *backend.QueryDataR
 				aliasBy:    q.AliasBy,
 				parameters: q.TimeSeriesQuery,
 				IntervalMS: query.Interval.Milliseconds(),
-				timeRange:  req.Queries[0].TimeRange,
+				timeRange:  req.Queries[index].TimeRange,
 				logger:     logger,
 			}
 		case string(dataquery.QueryTypeSLO):
@@ -425,6 +432,7 @@ func (s *Service) buildQueryExecutors(logger log.Logger, req *backend.QueryDataR
 				refID:      query.RefID,
 				aliasBy:    q.AliasBy,
 				parameters: q.SloQuery,
+				timeRange:  req.Queries[index].TimeRange,
 			}
 			cmslo.setParams(startTime, endTime, durationSeconds, query.Interval.Milliseconds())
 			queryInterface = cmslo
@@ -433,7 +441,7 @@ func (s *Service) buildQueryExecutors(logger log.Logger, req *backend.QueryDataR
 				refID:      query.RefID,
 				aliasBy:    q.AliasBy,
 				parameters: q.PromQLQuery,
-				timeRange:  req.Queries[0].TimeRange,
+				timeRange:  req.Queries[index].TimeRange,
 				logger:     logger,
 			}
 			queryInterface = cmp

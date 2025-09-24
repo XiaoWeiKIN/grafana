@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 
 	"google.golang.org/grpc"
@@ -9,10 +10,10 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	authClaims "github.com/grafana/authlib/claims"
+	"github.com/grafana/authlib/types"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
-	"github.com/grafana/grafana/pkg/infra/tracing"
 )
 
 const (
@@ -24,11 +25,13 @@ const (
 	mdOrgRole = "grafana-org-role"
 )
 
+var logger = slog.Default().With("logger", "legacy.grpc.Authenticator")
+
 // This is in a package we can no import
 // var _ interceptors.Authenticator = (*Authenticator)(nil)
 
 type Authenticator struct {
-	Tracer tracing.Tracer
+	Tracer trace.Tracer
 }
 
 func (f *Authenticator) Authenticate(ctx context.Context) (context.Context, error) {
@@ -74,7 +77,7 @@ func (f *Authenticator) decodeMetadata(meta metadata.MD) (identity.Requester, er
 	// TODO, remove after this has been deployed to unified storage
 	if getter(mdUserID) == "" {
 		var err error
-		user.Type = authClaims.TypeUser
+		user.Type = types.TypeUser
 		user.UserID, err = strconv.ParseInt(getter("grafana-userid"), 10, 64)
 		if err != nil {
 			return nil, status.Error(codes.Unauthenticated, "invalid user id")
@@ -86,7 +89,7 @@ func (f *Authenticator) decodeMetadata(meta metadata.MD) (identity.Requester, er
 		return user, nil
 	}
 
-	typ, id, err := authClaims.ParseTypeID(getter(mdUserID))
+	typ, id, err := types.ParseTypeID(getter(mdUserID))
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "invalid user id")
 	}
@@ -96,7 +99,7 @@ func (f *Authenticator) decodeMetadata(meta metadata.MD) (identity.Requester, er
 		return nil, status.Error(codes.Unauthenticated, "invalid user id")
 	}
 
-	_, uid, err := authClaims.ParseTypeID(getter(mdUserUID))
+	_, uid, err := types.ParseTypeID(getter(mdUserUID))
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "invalid user uid")
 	}
@@ -137,13 +140,16 @@ func wrapContext(ctx context.Context) (context.Context, error) {
 	}
 
 	// set grpc metadata into the context to pass to the grpc server
-	return metadata.NewOutgoingContext(ctx, encodeIdentityInMetadata(user)), nil
+	ctx = metadata.AppendToOutgoingContext(ctx, encodeIdentityInMetadataPairs(user)...)
+	return ctx, nil
 }
 
-func encodeIdentityInMetadata(user identity.Requester) metadata.MD {
+func encodeIdentityInMetadataPairs(user identity.Requester) []string {
 	id, _ := user.GetInternalID()
 
-	return metadata.Pairs(
+	logger.Debug("encodeIdentityInMetadataPairs", "user.id", user.GetID(), "user.Login", user.GetLogin(), "user.Name", user.GetName())
+
+	return []string{
 		// This should be everything needed to recreate the user
 		mdToken, user.GetIDToken(),
 
@@ -157,5 +163,5 @@ func encodeIdentityInMetadata(user identity.Requester) metadata.MD {
 		// TODO, Remove after this is deployed to unified storage
 		"grafana-userid", strconv.FormatInt(id, 10),
 		"grafana-useruid", user.GetRawIdentifier(),
-	)
+	}
 }

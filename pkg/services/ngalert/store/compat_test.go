@@ -42,4 +42,42 @@ func TestAlertRuleToModelsAlertRule(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, ngmodels.ErrorErrState, converted.ExecErrState)
 	})
+
+	t.Run("should handle NoGroup rules properly", func(t *testing.T) {
+		rule, err := alertRuleFromModelsAlertRule(g.Generate())
+		require.NoError(t, err)
+		rule.RuleGroup = ""
+		projectedRuleGroup, err := ngmodels.NewNoGroupRuleGroup(rule.UID)
+		require.NoError(t, err)
+
+		converted, err := alertRuleToModelsAlertRule(rule, &logtest.Fake{})
+		require.NoError(t, err)
+		require.Equal(t, projectedRuleGroup.String(), converted.RuleGroup)
+
+		clone, err := alertRuleFromModelsAlertRule(converted)
+		require.NoError(t, err)
+		require.Equal(t, rule, clone)
+		require.Empty(t, clone.RuleGroup)
+
+		converted2, err := alertRuleToModelsAlertRule(clone, &logtest.Fake{})
+		require.NoError(t, err)
+		require.Equal(t, converted, converted2)
+	})
+}
+
+func TestAlertRuleVersionToAlertRule(t *testing.T) {
+	g := ngmodels.RuleGen
+
+	t.Run("make sure no data is lost between conversions", func(t *testing.T) {
+		for _, rule := range g.GenerateMany(100) {
+			// ignore fields
+			rule.DashboardUID = nil
+			rule.PanelID = nil
+
+			r, err := alertRuleFromModelsAlertRule(rule)
+			require.NoError(t, err)
+			r2 := alertRuleVersionToAlertRule(alertRuleToAlertRuleVersion(r))
+			require.Equal(t, r, r2)
+		}
+	})
 }

@@ -5,21 +5,27 @@ import (
 )
 
 DashboardV2Spec: {
-  // Unique numeric identifier for the dashboard.
-  // `id` is internal to a specific Grafana instance. `uid` should be used to identify a dashboard across Grafana instances.
-  id?: int64
-
   // Title of dashboard.
-  title: string
-
-  // Description of dashboard.
-  description?: string
+  annotations: [...AnnotationQueryKind]
 
   // Configuration of dashboard cursor sync behavior.
   // "Off" for no shared crosshair or tooltip (default).
   // "Crosshair" for shared crosshair.
   // "Tooltip" for shared crosshair AND shared tooltip.
   cursorSync: DashboardCursorSync
+
+  // Description of dashboard.
+  description?: string
+
+  // Whether a dashboard is editable or not.
+  editable?: bool | *true
+
+  elements: [ElementReference.name]: Element
+
+  layout: GridLayoutKind | RowsLayoutKind | AutoGridLayoutKind | TabsLayoutKind
+
+  // Links with references to other dashboards or external websites.
+  links: [...DashboardLink]
 
   // When set to true, the dashboard will redraw panels at an interval matching the pixel width.
   // This will keep data "moving left" regardless of the query refresh rate. This setting helps
@@ -29,35 +35,47 @@ DashboardV2Spec: {
   // When set to true, the dashboard will load all panels in the dashboard when it's loaded.
   preload: bool
 
-  // Whether a dashboard is editable or not.
-  editable?: bool | *true
-
-  // Links with references to other dashboards or external websites.
-  links: [...DashboardLink]
+  // Plugins only. The version of the dashboard installed together with the plugin.
+  // This is used to determine if the dashboard should be updated when the plugin is updated.
+  revision?: uint16
 
   // Tags associated with dashboard.
   tags: [...string]
 
   timeSettings: TimeSettingsSpec
 
+  // Title of dashboard.
+  title: string
+
   // Configured template variables.
   variables: [...VariableKind]
-
-  elements: [ElementReference.name]: PanelKind // |* more element types in the future
-
-  annotations: [...AnnotationQueryKind]
-
-  layout: GridLayoutKind
-
-  // Version of the JSON schema, incremented each time a Grafana update brings
-  // changes to said schema.
-  schemaVersion: uint16 | *39
-
-  // Plugins only. The version of the dashboard installed together with the plugin.
-  // This is used to determine if the dashboard should be updated when the plugin is updated.
-  revision?: uint16
 }
 
+// Supported dashboard elements
+Element: PanelKind | LibraryPanelKind // |* more element types in the future
+
+LibraryPanelKind: {
+  kind: "LibraryPanel"
+  spec: LibraryPanelSpec
+}
+
+LibraryPanelSpec: {
+  // Panel ID for the library panel in the dashboard
+  id: number
+  // Title for the library panel in the dashboard
+  title: string
+  libraryPanel: LibraryPanelRef
+}
+
+// A library panel is a reusable panel that you can use in any dashboard.
+// When you make a change to a library panel, that change propagates to all instances of where the panel is used.
+// Library panels streamline reuse of panels across multiple dashboards.
+LibraryPanelRef: {
+  // Library panel name
+  name: string
+  // Library panel uid
+  uid: string
+}
 
 AnnotationPanelFilter: {
   // Should the specified panels be included or excluded
@@ -217,7 +235,7 @@ DynamicConfigValue: {
 }
 
 // Matcher is a predicate configuration. Based on the config a set of field(s) or values is filtered in order to apply override / transformation.
-// It comes with in id ( to resolve implementation from registry) and a configuration that’s specific to a particular matcher type.
+// It comes with in id ( to resolve implementation from registry) and a configuration that's specific to a particular matcher type.
 MatcherConfig: {
   // The matcher id. This is used to find the matcher implementation from registry.
   id: string | *""
@@ -375,6 +393,7 @@ AnnotationQuerySpec: {
   name: string
   builtIn?: bool | *false
   filter?: AnnotationPanelFilter
+  options?: [string]: _ // Catch-all field for datasource-specific properties
 }
 
 AnnotationQueryKind: {
@@ -428,6 +447,12 @@ QueryGroupKind: {
   spec: QueryGroupSpec
 }
 
+TimeRangeOption: {
+  display: string | *"Last 6 hours"
+  from: string | *"now-6h"
+  to: string | *"now"
+}
+
 // Time configuration
 // It defines the default time config for the time picker, the refresh picker for the specific dashboard.
 TimeSettingsSpec: {
@@ -444,11 +469,11 @@ TimeSettingsSpec: {
   // Interval options available in the refresh picker dropdown.
   autoRefreshIntervals: [...string] | *["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"] // v1: timepicker.refresh_intervals
   // Selectable options available in the time picker dropdown. Has no effect on provisioned dashboard.
-  quickRanges: [...string] | *["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"] // v1: timepicker.time_options , not exposed in the UI
+  quickRanges?: [...TimeRangeOption] // v1: timepicker.quick_ranges , not exposed in the UI
   // Whether timepicker is visible or not.
   hideTimepicker: bool // v1: timepicker.hidden
   // Day when the week starts. Expressed by the name of the day in lowercase, e.g. "monday".
-  weekStart: string
+  weekStart?: "saturday" | "monday" | "sunday"
   // The month that the fiscal year starts on. 0 = January, 11 = December
   fiscalYearStartMonth: int
   // Override the now time by entering a time delay. Use this option to accommodate known delays in data aggregation to avoid null values.
@@ -462,6 +487,21 @@ RepeatOptions: {
   value: string
   direction?: "h" | "v"
   maxPerRow?: int
+}
+
+RowRepeatOptions: {
+  mode: RepeatMode,
+  value: string
+}
+
+TabRepeatOptions: {
+  mode: RepeatMode,
+  value: string
+}
+
+AutoGridRepeatOptions: {
+  mode: RepeatMode
+  value: string
 }
 
 GridLayoutItemSpec: {
@@ -485,6 +525,77 @@ GridLayoutSpec: {
 GridLayoutKind: {
   kind: "GridLayout"
   spec: GridLayoutSpec
+}
+
+RowsLayoutKind: {
+  kind: "RowsLayout"
+  spec: RowsLayoutSpec
+}
+
+RowsLayoutSpec: {
+  rows: [...RowsLayoutRowKind]
+}
+
+RowsLayoutRowKind: {
+  kind: "RowsLayoutRow"
+  spec: RowsLayoutRowSpec
+}
+
+RowsLayoutRowSpec: {
+  title?: string
+  collapse?: bool
+  hideHeader?: bool
+  fillScreen?: bool
+  repeat?: RowRepeatOptions
+  conditionalRendering?: ConditionalRenderingGroupKind
+  layout: GridLayoutKind | AutoGridLayoutKind | TabsLayoutKind | RowsLayoutKind
+}
+
+AutoGridLayoutKind: {
+  kind: "AutoGridLayout"
+  spec: AutoGridLayoutSpec
+}
+
+AutoGridLayoutSpec: {
+	maxColumnCount?: number | *3
+	columnWidthMode: "narrow" | *"standard" | "wide" | "custom"
+	columnWidth?: number
+	rowHeightMode: "short" | *"standard" | "tall" | "custom"
+	rowHeight?: number
+	fillScreen?: bool | *false
+	items: [...AutoGridLayoutItemKind]
+}
+
+AutoGridLayoutItemKind: {
+  kind: "AutoGridLayoutItem"
+  spec: AutoGridLayoutItemSpec
+}
+
+AutoGridLayoutItemSpec: {
+  element: ElementReference
+  repeat?: AutoGridRepeatOptions
+  conditionalRendering?: ConditionalRenderingGroupKind
+}
+
+TabsLayoutKind: {
+  kind: "TabsLayout"
+  spec: TabsLayoutSpec
+}
+
+TabsLayoutSpec: {
+  tabs: [...TabsLayoutTabKind]
+}
+
+TabsLayoutTabKind: {
+  kind: "TabsLayoutTab"
+  spec: TabsLayoutTabSpec
+}
+
+TabsLayoutTabSpec: {
+  title?: string
+  layout: GridLayoutKind | RowsLayoutKind | AutoGridLayoutKind | TabsLayoutKind
+  repeat?: TabRepeatOptions
+  conditionalRendering?: ConditionalRenderingGroupKind
 }
 
 PanelSpec: {
@@ -614,7 +725,7 @@ QueryVariableSpec: {
   skipUrlSync: bool | *false
   description?: string
   datasource?: DataSourceRef
-  query: string | DataQueryKind | *""
+  query: DataQueryKind
   regex: string | *""
   sort: VariableSort
   definition?: string
@@ -753,8 +864,6 @@ GroupByVariableSpec: {
   }
   options: [...VariableOption] | *[]
   multi: bool | *false
-  includeAll: bool | *false
-  allValue?: string
   label?: string
   hide: VariableHide
   skipUrlSync: bool | *false
@@ -805,4 +914,44 @@ AdHocFilterWithLabels: {
 AdhocVariableKind: {
   kind: "AdhocVariable"
   spec: AdhocVariableSpec
+}
+
+ConditionalRenderingGroupKind: {
+  kind: "ConditionalRenderingGroup"
+  spec: ConditionalRenderingGroupSpec
+}
+
+ConditionalRenderingGroupSpec: {
+  visibility: "show" | "hide"
+  condition: "and" | "or"
+  items: [...ConditionalRenderingVariableKind | ConditionalRenderingDataKind | ConditionalRenderingTimeRangeSizeKind]
+}
+
+ConditionalRenderingVariableKind: {
+  kind: "ConditionalRenderingVariable"
+  spec: ConditionalRenderingVariableSpec
+}
+
+ConditionalRenderingVariableSpec: {
+  variable: string
+  operator: "equals" | "notEquals" | "matches" | "notMatches"
+  value: string
+}
+
+ConditionalRenderingDataKind: {
+  kind: "ConditionalRenderingData"
+  spec: ConditionalRenderingDataSpec
+}
+
+ConditionalRenderingDataSpec: {
+  value: bool
+}
+
+ConditionalRenderingTimeRangeSizeKind: {
+  kind: "ConditionalRenderingTimeRangeSize"
+  spec: ConditionalRenderingTimeRangeSizeSpec
+}
+
+ConditionalRenderingTimeRangeSizeSpec: {
+  value: string
 }

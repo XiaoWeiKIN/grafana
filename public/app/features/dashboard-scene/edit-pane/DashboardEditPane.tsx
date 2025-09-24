@@ -1,25 +1,31 @@
-import { css } from '@emotion/css';
-import { useEffect, useRef } from 'react';
-
-import { GrafanaTheme2 } from '@grafana/data';
+import { SceneObjectState, SceneObjectBase, SceneObject, sceneGraph } from '@grafana/scenes';
 import {
-  SceneObjectState,
-  SceneObjectBase,
-  SceneObject,
-  SceneObjectRef,
-  sceneGraph,
-  useSceneObjectState,
-} from '@grafana/scenes';
-import { ElementSelectionContextItem, ElementSelectionContextState, ToolbarButton, useStyles2 } from '@grafana/ui';
+  ElementSelectionContextItem,
+  ElementSelectionContextState,
+  ElementSelectionOnSelectOptions,
+} from '@grafana/ui';
 
+import { TabItem } from '../scene/layout-tabs/TabItem';
+import { isRepeatCloneOrChildOf } from '../utils/clone';
 import { getDashboardSceneFor } from '../utils/utils';
 
-import { ElementEditPane } from './ElementEditPane';
-import { useEditableElement } from './useEditableElement';
+import { ElementSelection } from './ElementSelection';
+import {
+  ConditionalRenderingChangedEvent,
+  DashboardEditActionEvent,
+  DashboardEditActionEventPayload,
+  DashboardStateChangedEvent,
+  NewObjectAddedToCanvasEvent,
+  ObjectRemovedFromCanvasEvent,
+  ObjectsReorderedOnCanvasEvent,
+} from './shared';
 
 export interface DashboardEditPaneState extends SceneObjectState {
-  selectedObject?: SceneObjectRef<SceneObject>;
+  selection?: ElementSelection;
   selectionContext: ElementSelectionContextState;
+
+  undoStack: DashboardEditActionEventPayload[];
+  redoStack: DashboardEditActionEventPayload[];
 }
 
 export class DashboardEditPane extends SceneObjectBase<DashboardEditPaneState> {
@@ -28,9 +34,153 @@ export class DashboardEditPane extends SceneObjectBase<DashboardEditPaneState> {
       selectionContext: {
         enabled: false,
         selected: [],
-        onSelect: (item, multi) => this.selectElement(item, multi),
+        onSelect: (item, options) => this.selectElement(item, options),
+        onClear: () => this.clearSelection(),
       },
+      undoStack: [],
+      redoStack: [],
     });
+
+    this.addActivationHandler(this.onActivate.bind(this));
+  }
+
+  private panelEditAction?: DashboardEditActionEvent;
+
+  public setPanelEditAction(editAction: DashboardEditActionEvent) {
+    this.panelEditAction = editAction;
+  }
+
+  private onActivate() {
+    const dashboard = getDashboardSceneFor(this);
+
+    this._subs.add(
+      dashboard.subscribeToEvent(DashboardEditActionEvent, ({ payload }) => {
+        this.handleEditAction(payload);
+      })
+    );
+
+    this._subs.add(
+      dashboard.subscribeToEvent(NewObjectAddedToCanvasEvent, ({ payload }) => {
+        this.newObjectAddedToCanvas(payload);
+      })
+    );
+
+    this._subs.add(
+      dashboard.subscribeToEvent(ObjectRemovedFromCanvasEvent, ({ payload }) => {
+        this.clearSelection();
+      })
+    );
+
+    this._subs.add(
+      dashboard.subscribeToEvent(ObjectsReorderedOnCanvasEvent, ({ payload }) => {
+        this.forceRender();
+      })
+    );
+
+    this._subs.add(
+      dashboard.subscribeToEvent(ConditionalRenderingChangedEvent, ({ payload }) => {
+        this.forceRender();
+      })
+    );
+
+    if (this.panelEditAction) {
+      this.performPanelEditAction(this.panelEditAction);
+      this.panelEditAction = undefined;
+    }
+  }
+
+  private performPanelEditAction(action: DashboardEditActionEvent) {
+    // Some layout items are not yet active when leaving panel edit, let's wait for them to activate
+    if (!action.payload.source.isActive) {
+      trySwitchingToSourceTab(action.payload.source);
+      setTimeout(() => this.performPanelEditAction(action));
+      return;
+    }
+
+    action.payload.source.publishEvent(action, true);
+  }
+
+  /**
+   * Handles all edit actions
+   * Adds to undo history and selects new object
+   * @param payload
+   */
+  private handleEditAction(action: DashboardEditActionEventPayload) {
+    // Clear redo stack when user performs a new action
+    // Otherwise things can get into very broken states
+    if (this.state.redoStack.length > 0) {
+      this.setState({ redoStack: [] });
+    }
+
+    this.performAction(action);
+
+    this.setState({ undoStack: [...this.state.undoStack, action] });
+  }
+
+  /**
+   * Removes last action from undo stack and adds it to redo stack.
+   */
+  public undoAction() {
+    const undoStack = this.state.undoStack.slice();
+    const action = undoStack.pop();
+    if (!action) {
+      return;
+    }
+
+    action.undo();
+    action.source.publishEvent(new DashboardStateChangedEvent({ source: action.source }), true);
+
+    /**
+     * Some edit actions also require clearing selection or selecting new objects
+     */
+    if (action.addedObject) {
+      this.clearSelection();
+    }
+
+    if (action.movedObject) {
+      this.selectObject(action.movedObject, action.movedObject.state.key!, { force: true });
+    }
+
+    if (action.removedObject) {
+      this.newObjectAddedToCanvas(action.removedObject);
+    }
+
+    this.setState({ undoStack, redoStack: [...this.state.redoStack, action] });
+  }
+
+  /**
+   * Some edit actions also require clearing selection or selecting new objects
+   */
+  private performAction(action: DashboardEditActionEventPayload) {
+    action.perform();
+    action.source.publishEvent(new DashboardStateChangedEvent({ source: action.source }), true);
+
+    if (action.addedObject) {
+      this.newObjectAddedToCanvas(action.addedObject);
+    }
+
+    if (action.movedObject) {
+      this.selectObject(action.movedObject, action.movedObject.state.key!, { force: true });
+    }
+
+    if (action.removedObject) {
+      this.clearSelection();
+    }
+  }
+
+  /**
+   * Removes last action from redo stack and adds it to undo stack.
+   */
+  public redoAction() {
+    const redoStack = this.state.redoStack.slice();
+    const action = redoStack.pop();
+    if (!action) {
+      return;
+    }
+
+    this.performAction(action);
+
+    this.setState({ redoStack, undoStack: [...this.state.undoStack, action] });
   }
 
   public enableSelection() {
@@ -39,114 +189,101 @@ export class DashboardEditPane extends SceneObjectBase<DashboardEditPaneState> {
   }
 
   public disableSelection() {
-    this.setState({ selectionContext: { ...this.state.selectionContext, enabled: false } });
+    this.setState({
+      selectionContext: { ...this.state.selectionContext, selected: [], enabled: false },
+      selection: undefined,
+    });
   }
 
-  private selectElement(element: ElementSelectionContextItem, multi?: boolean) {
-    const obj = sceneGraph.findByKey(this, element.id);
+  private selectElement(element: ElementSelectionContextItem, options: ElementSelectionOnSelectOptions) {
+    let obj = sceneGraph.findByKey(this, element.id);
     if (obj) {
-      this.selectObject(obj, element.id, multi);
+      // Do not select repeat clones or their children
+      if (isRepeatCloneOrChildOf(obj)) {
+        return;
+      }
+
+      this.selectObject(obj, element.id, options);
     }
   }
 
-  public selectObject(obj: SceneObject, id: string, multi?: boolean) {
-    const currentSelection = this.state.selectedObject?.resolve();
-    if (currentSelection === obj) {
+  public getSelection(): SceneObject | SceneObject[] | undefined {
+    return this.state.selection?.getSelection();
+  }
+
+  public selectObject(obj: SceneObject, id: string, { multi, force }: ElementSelectionOnSelectOptions = {}) {
+    if (!force) {
+      if (multi) {
+        if (this.state.selection?.hasValue(id)) {
+          this.removeMultiSelectedObject(id);
+          return;
+        }
+      } else {
+        if (this.state.selection?.getFirstObject() === obj) {
+          this.clearSelection();
+          return;
+        }
+      }
+    }
+
+    const elementSelection = this.state.selection ?? new ElementSelection([[id, obj.getRef()]]);
+
+    const { selection, contextItems: selected } = elementSelection.getStateWithValue(id, obj, !!multi);
+
+    this.updateSelection(new ElementSelection(selection), selected);
+  }
+
+  private removeMultiSelectedObject(id: string) {
+    if (!this.state.selection) {
+      return;
+    }
+
+    const { entries, contextItems: selected } = this.state.selection.getStateWithoutValueAt(id);
+
+    if (entries.length === 0) {
       this.clearSelection();
       return;
     }
 
-    this.setState({
-      selectedObject: obj.getRef(),
-      selectionContext: {
-        ...this.state.selectionContext,
-        selected: [{ id }],
-      },
-    });
+    this.updateSelection(new ElementSelection([...entries]), selected);
+  }
+
+  private updateSelection(selection: ElementSelection | undefined, selected: ElementSelectionContextItem[]) {
+    // onBlur events are not fired on unmount and some edit pane inputs have important onBlur events
+    // This make sure they fire before unmounting
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+
+    this.setState({ selection, selectionContext: { ...this.state.selectionContext, selected } });
   }
 
   public clearSelection() {
-    const dashboard = getDashboardSceneFor(this);
-    this.setState({
-      selectedObject: dashboard.getRef(),
-      selectionContext: {
-        ...this.state.selectionContext,
-        selected: [],
-      },
-    });
-  }
-}
-
-export interface Props {
-  editPane: DashboardEditPane;
-  isCollapsed: boolean;
-  onToggleCollapse: () => void;
-}
-
-/**
- * Making the EditPane rendering completely standalone (not using editPane.Component) in order to pass custom react props
- */
-export function DashboardEditPaneRenderer({ editPane, isCollapsed, onToggleCollapse }: Props) {
-  // Activate the edit pane
-  useEffect(() => {
-    if (!editPane.state.selectedObject) {
-      const dashboard = getDashboardSceneFor(editPane);
-      editPane.setState({ selectedObject: dashboard.getRef() });
+    if (!this.state.selection) {
+      return;
     }
 
-    editPane.enableSelection();
-
-    return () => {
-      editPane.disableSelection();
-    };
-  }, [editPane]);
-
-  const { selectedObject } = useSceneObjectState(editPane, { shouldActivateOrKeepAlive: true });
-  const styles = useStyles2(getStyles);
-  const paneRef = useRef<HTMLDivElement>(null);
-  const editableElement = useEditableElement(selectedObject?.resolve());
-
-  if (!editableElement) {
-    return null;
+    this.updateSelection(undefined, []);
   }
 
-  if (isCollapsed) {
-    return (
-      <div className={styles.expandOptionsWrapper}>
-        <ToolbarButton
-          tooltip={'Open options pane'}
-          icon={'arrow-to-right'}
-          onClick={onToggleCollapse}
-          variant="canvas"
-          className={styles.rotate180}
-          aria-label={'Open options pane'}
-        />
-      </div>
-    );
+  private newObjectAddedToCanvas(obj: SceneObject) {
+    this.selectObject(obj, obj.state.key!);
+    this.state.selection?.markAsNewElement();
   }
-
-  return (
-    <div className={styles.wrapper} ref={paneRef}>
-      <ElementEditPane element={editableElement} key={editableElement.getTypeName()} />
-    </div>
-  );
 }
 
-function getStyles(theme: GrafanaTheme2) {
-  return {
-    wrapper: css({
-      display: 'flex',
-      flexDirection: 'column',
-      flex: '1 1 0',
-      overflow: 'auto',
-    }),
-    rotate180: css({
-      rotate: '180deg',
-    }),
-    expandOptionsWrapper: css({
-      display: 'flex',
-      flexDirection: 'column',
-      padding: theme.spacing(2, 1),
-    }),
-  };
+function trySwitchingToSourceTab(source: SceneObject) {
+  if (source.parent === undefined) {
+    return;
+  }
+
+  if (source.parent instanceof TabItem) {
+    const tab = source.parent;
+    const tabsLayout = source.parent.getParentLayout();
+    if (tabsLayout.state.currentTabSlug !== tab.getSlug()) {
+      tabsLayout.switchToTab(tab);
+    }
+  } else {
+    trySwitchingToSourceTab(source.parent);
+  }
 }

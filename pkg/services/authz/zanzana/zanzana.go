@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/grafana/authlib/authz"
 	openfgav1 "github.com/openfga/api/proto/openfga/v1"
+
+	authlib "github.com/grafana/authlib/types"
 
 	"github.com/grafana/grafana/pkg/services/authz/zanzana/common"
 )
@@ -37,28 +38,26 @@ const (
 	RelationCreate = common.RelationCreate
 	RelationDelete = common.RelationDelete
 
-	RelationFolderResourceSetView  = common.RelationFolderResourceSetView
-	RelationFolderResourceSetEdit  = common.RelationFolderResourceSetEdit
-	RelationFolderResourceSetAdmin = common.RelationFolderResourceSetAdmin
+	RelationSubresourceSetView  = common.RelationSubresourceSetView
+	RelationSubresourceSetEdit  = common.RelationSubresourceSetEdit
+	RelationSubresourceSetAdmin = common.RelationSubresourceSetAdmin
 
-	RelationFolderResourceRead   = common.RelationFolderResourceGet
-	RelationFolderResourceWrite  = common.RelationFolderResourceUpdate
-	RelationFolderResourceCreate = common.RelationFolderResourceCreate
-	RelationFolderResourceDelete = common.RelationFolderResourceDelete
+	RelationSubresourceRead   = common.RelationSubresourceGet
+	RelationSubresourceWrite  = common.RelationSubresourceUpdate
+	RelationSubresourceCreate = common.RelationSubresourceCreate
+	RelationSubresourceDelete = common.RelationSubresourceDelete
 )
 
 var (
-	RelationsFolder         = common.RelationsFolder
-	RelationsResouce        = common.RelationsResource
-	RelationsFolderResource = common.RelationsFolderResource
+	RelationsFolder      = common.RelationsTyped
+	RelationsResouce     = common.RelationsResource
+	RelationsSubresource = common.RelationsSubresource
 )
 
 const (
 	KindDashboards string = "dashboards"
 	KindFolders    string = "folders"
 )
-
-var ClusterNamespace = common.ClusterNamespace
 
 var (
 	ToAuthzExtTupleKey                  = common.ToAuthzExtTupleKey
@@ -119,12 +118,12 @@ func IsFolderResourceTuple(t *openfgav1.TupleKey) bool {
 }
 
 func MergeFolderResourceTuples(a, b *openfgav1.TupleKey) {
-	va := a.Condition.Context.Fields["group_resources"]
-	vb := b.Condition.Context.Fields["group_resources"]
+	va := a.Condition.Context.Fields["subresources"]
+	vb := b.Condition.Context.Fields["subresources"]
 	va.GetListValue().Values = append(va.GetListValue().Values, vb.GetListValue().Values...)
 }
 
-func TranslateToCheckRequest(namespace, action, kind, folder, name string) (*authz.CheckRequest, bool) {
+func TranslateToCheckRequest(namespace, action, kind, folder, name string) (*authlib.CheckRequest, bool) {
 	translation, ok := resourceTranslations[kind]
 
 	if !ok {
@@ -141,7 +140,7 @@ func TranslateToCheckRequest(namespace, action, kind, folder, name string) (*aut
 		return nil, false
 	}
 
-	req := &authz.CheckRequest{
+	req := &authlib.CheckRequest{
 		Namespace: namespace,
 		Verb:      verb,
 		Group:     translation.group,
@@ -153,7 +152,7 @@ func TranslateToCheckRequest(namespace, action, kind, folder, name string) (*aut
 	return req, true
 }
 
-func TranslateToListRequest(namespace, action, kind string) (*authz.ListRequest, bool) {
+func TranslateToListRequest(namespace, action, kind string) (*authlib.ListRequest, bool) {
 	translation, ok := resourceTranslations[kind]
 
 	if !ok {
@@ -161,7 +160,7 @@ func TranslateToListRequest(namespace, action, kind string) (*authz.ListRequest,
 	}
 
 	// FIXME: support different verbs
-	req := &authz.ListRequest{
+	req := &authlib.ListRequest{
 		Namespace: namespace,
 		Group:     translation.group,
 		Resource:  translation.resource,

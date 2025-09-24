@@ -1,5 +1,5 @@
 import { CoreApp, LoadingState, QueryEditorProps, SelectableValue } from '@grafana/data';
-import { EditorHeader, InlineSelect, FlexItem } from '@grafana/experimental';
+import { EditorHeader, InlineSelect, FlexItem } from '@grafana/plugin-ui';
 import { config } from '@grafana/runtime';
 import { Badge, Button } from '@grafana/ui';
 
@@ -47,9 +47,9 @@ const QueryHeader = ({
   const onRegionChange = async (region: string) => {
     if (config.featureToggles.cloudWatchCrossAccountQuerying && isCloudWatchMetricsQuery(query)) {
       const isMonitoringAccount = await datasource.resources.isMonitoringAccount(region);
-      onChange({ ...query, region, accountId: isMonitoringAccount ? query.accountId : undefined });
+      onChange({ ...query, logGroups: [], region, accountId: isMonitoringAccount ? query.accountId : undefined });
     } else {
-      onChange({ ...query, region });
+      onChange({ ...query, logGroups: [], region });
     }
   };
 

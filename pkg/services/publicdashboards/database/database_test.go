@@ -24,6 +24,7 @@ import (
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/tests/testsuite"
 	"github.com/grafana/grafana/pkg/util"
+	"github.com/grafana/grafana/pkg/util/testutil"
 )
 
 // This is what the db sets empty time settings to
@@ -42,9 +43,7 @@ func TestLogPrefix(t *testing.T) {
 }
 
 func TestIntegrationListPublicDashboard(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
 
 	var sqlStore db.DB
 	var cfg *setting.Cfg
@@ -116,9 +115,8 @@ func TestIntegrationListPublicDashboard(t *testing.T) {
 }
 
 func TestIntegrationExistsEnabledByAccessToken(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	var sqlStore db.DB
 	var cfg *setting.Cfg
 	var dashboardStore dashboards.Store
@@ -188,9 +186,8 @@ func TestIntegrationExistsEnabledByAccessToken(t *testing.T) {
 }
 
 func TestIntegrationExistsEnabledByDashboardUid(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	var sqlStore db.DB
 	var cfg *setting.Cfg
 	var dashboardStore dashboards.Store
@@ -252,9 +249,8 @@ func TestIntegrationExistsEnabledByDashboardUid(t *testing.T) {
 }
 
 func TestIntegrationFindByDashboardUid(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	var sqlStore db.DB
 	var cfg *setting.Cfg
 	var dashboardStore dashboards.Store
@@ -319,9 +315,8 @@ func TestIntegrationFindByDashboardUid(t *testing.T) {
 }
 
 func TestIntegrationFindByAccessToken(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	var sqlStore db.DB
 	var cfg *setting.Cfg
 	var dashboardStore dashboards.Store
@@ -387,9 +382,8 @@ func TestIntegrationFindByAccessToken(t *testing.T) {
 }
 
 func TestIntegrationCreatePublicDashboard(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	var sqlStore db.DB
 	var cfg *setting.Cfg
 	var dashboardStore dashboards.Store
@@ -465,9 +459,8 @@ func TestIntegrationCreatePublicDashboard(t *testing.T) {
 }
 
 func TestIntegrationUpdatePublicDashboard(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	var sqlStore db.DB
 	var cfg *setting.Cfg
 	var dashboardStore dashboards.Store
@@ -569,9 +562,8 @@ func TestIntegrationUpdatePublicDashboard(t *testing.T) {
 }
 
 func TestIntegrationGetOrgIdByAccessToken(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	var sqlStore db.DB
 	var cfg *setting.Cfg
 	var dashboardStore dashboards.Store
@@ -640,9 +632,8 @@ func TestIntegrationGetOrgIdByAccessToken(t *testing.T) {
 }
 
 func TestIntegrationDelete(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	var sqlStore db.DB
 	var cfg *setting.Cfg
 	var dashboardStore dashboards.Store
@@ -682,55 +673,61 @@ func TestIntegrationDelete(t *testing.T) {
 	})
 }
 
-func TestFindByFolder(t *testing.T) {
-	t.Run("returns nil when dashboard is not a folder", func(t *testing.T) {
-		sqlStore, cfg := db.InitTestDBWithCfg(t)
-		dashboard := &dashboards.Dashboard{OrgID: 1, UID: "dashboarduid", IsFolder: false}
+func TestIntegrationDeleteByDashboardUIDs(t *testing.T) {
+	testutil.SkipIntegrationTestInShortMode(t)
+
+	var sqlStore db.DB
+	var cfg *setting.Cfg
+	var dashboardStore dashboards.Store
+	var publicdashboardStore *PublicDashboardStoreImpl
+	var savedDashboard *dashboards.Dashboard
+	//var savedPublicDashboard *PublicDashboard
+	var err error
+
+	setup := func() {
+		sqlStore, cfg = db.InitTestDBWithCfg(t)
+		dashboardStore, err = dashboardsDB.ProvideDashboardStore(sqlStore, cfg, featuremgmt.WithFeatures(), tagimpl.ProvideService(sqlStore))
+		require.NoError(t, err)
+		publicdashboardStore = ProvideStore(sqlStore, cfg, featuremgmt.WithFeatures())
+		savedDashboard = insertTestDashboard(t, dashboardStore, "testDashie", 1, "", true)
+		_ = insertPublicDashboard(t, publicdashboardStore, savedDashboard.UID, savedDashboard.OrgID, true, PublicShareType)
+	}
+
+	t.Run("returns nil when dashboardUIDs is empty", func(t *testing.T) {
+		setup()
+		var dashboardUIDs []string
 		store := ProvideStore(sqlStore, cfg, featuremgmt.WithFeatures())
-		pubdashes, err := store.FindByFolder(context.Background(), dashboard.OrgID, dashboard.UID)
+		err := store.DeleteByDashboardUIDs(context.Background(), 1, dashboardUIDs)
 
 		require.NoError(t, err)
-		assert.Nil(t, pubdashes)
+		assert.Nil(t, err)
 	})
 
-	t.Run("returns nil when parameters are empty", func(t *testing.T) {
-		sqlStore, cfg := db.InitTestDBWithCfg(t)
-		store := ProvideStore(sqlStore, cfg, featuremgmt.WithFeatures())
-		pubdashes, err := store.FindByFolder(context.Background(), 0, "")
+	t.Run("deletes public dashboards with provided dashboard uids", func(t *testing.T) {
+		setup()
 
+		// confirm the pubdash exists
+		pubdash, err := publicdashboardStore.FindByDashboardUid(context.Background(), savedDashboard.OrgID, savedDashboard.UID)
 		require.NoError(t, err)
-		assert.Nil(t, pubdashes)
-	})
+		assert.NotNil(t, pubdash)
 
-	t.Run("can get all pubdashes for dashboard folder and org", func(t *testing.T) {
-		sqlStore, cfg := db.InitTestDBWithCfg(t)
-		dashboardStore, err := dashboardsDB.ProvideDashboardStore(sqlStore, cfg, featuremgmt.WithFeatures(), tagimpl.ProvideService(sqlStore))
+		dashboardUIDs := []string{savedDashboard.UID}
+
+		// delete the pubdash by dashboard uid
+		err = publicdashboardStore.DeleteByDashboardUIDs(context.Background(), 1, dashboardUIDs)
 		require.NoError(t, err)
-		pubdashStore := ProvideStore(sqlStore, cfg, featuremgmt.WithFeatures())
-		// insert folders
-		folder := insertTestDashboard(t, dashboardStore, "This is a folder", 1, "", true, PublicShareType)
-		folder2 := insertTestDashboard(t, dashboardStore, "This is another folder", 1, "", true, PublicShareType)
-		// insert dashboard in a folder
-		dashboard := insertTestDashboard(t, dashboardStore, "Dashboard in a folder", 1, folder.UID, false, PublicShareType)
-		// insert a dashboard in a different folder
-		dashboard2 := insertTestDashboard(t, dashboardStore, "Another Dashboard in a different folder", 1, folder2.UID, false, PublicShareType)
+		assert.Nil(t, err)
 
-		// create 2 public dashboards
-		pubdash := insertPublicDashboard(t, pubdashStore, dashboard.UID, dashboard.OrgID, true, PublicShareType)
-		_ = insertPublicDashboard(t, pubdashStore, dashboard2.UID, dashboard2.OrgID, true, PublicShareType)
-
-		pubdashes, err := pubdashStore.FindByFolder(context.Background(), folder.OrgID, folder.UID)
-
+		// confirm the pubdash was deleted
+		pubdash, err = publicdashboardStore.FindByDashboardUid(context.Background(), savedDashboard.OrgID, savedDashboard.UID)
 		require.NoError(t, err)
-		assert.Len(t, pubdashes, 1)
-		assert.Equal(t, pubdash, pubdashes[0])
+		assert.Nil(t, pubdash)
 	})
 }
 
-func TestGetMetrics(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+func TestIntegrationGetMetrics(t *testing.T) {
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	var sqlStore db.DB
 	var cfg *setting.Cfg
 	var dashboardStore dashboards.Store

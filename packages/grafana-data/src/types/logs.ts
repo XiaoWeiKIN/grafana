@@ -4,6 +4,7 @@ import { DataQuery, LogsSortOrder } from '@grafana/schema';
 
 import { BusEventWithPayload } from '../events/types';
 
+import { ScopedVars } from './ScopedVars';
 import { KeyValue, Labels } from './data';
 import { DataFrame } from './dataFrame';
 import { DataQueryRequest, DataQueryResponse, DataSourceApi, QueryFixAction, QueryFixType } from './datasource';
@@ -98,6 +99,7 @@ export interface LogRowModel {
   uid: string;
   uniqueLabels?: Labels;
   datasourceType?: string;
+  datasourceUid?: string;
 }
 
 export interface LogsModel {
@@ -134,6 +136,9 @@ export enum LogsDedupDescription {
 export interface LogRowContextOptions {
   direction?: LogRowContextQueryDirection;
   limit?: number;
+  scopedVars?: ScopedVars;
+  // Optional. Size of the time window to get logs before of after the referenced entry.
+  timeWindowMs?: number;
 }
 
 export enum LogRowContextQueryDirection {
@@ -172,7 +177,15 @@ export interface DataSourceWithLogsContextSupport<TQuery extends DataQuery = Dat
    * @alpha
    * @internal
    */
-  getLogRowContextUi?(row: LogRowModel, runContextQuery?: () => void, origQuery?: TQuery): React.ReactNode;
+  getLogRowContextUi?(
+    row: LogRowModel,
+    runContextQuery?: () => void,
+    origQuery?: TQuery,
+    scopedVars?: ScopedVars
+  ): React.ReactNode;
+
+  // Does the datasource support the user adjusting the time range in the logs context window? https://github.com/grafana/grafana/pull/109901
+  supportsAdjustableWindow?: boolean;
 }
 
 export const hasLogsContextSupport = (datasource: unknown): datasource is DataSourceWithLogsContextSupport => {

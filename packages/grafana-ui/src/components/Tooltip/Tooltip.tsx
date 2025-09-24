@@ -1,15 +1,14 @@
 import {
   arrow,
   autoUpdate,
-  flip,
   FloatingArrow,
   offset,
-  shift,
   useDismiss,
   useFloating,
   useFocus,
   useHover,
   useInteractions,
+  safePolygon,
 } from '@floating-ui/react';
 import { forwardRef, cloneElement, isValidElement, useCallback, useId, useRef, useState } from 'react';
 
@@ -17,6 +16,7 @@ import { GrafanaTheme2 } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
 
 import { useStyles2 } from '../../themes/ThemeContext';
+import { getPositioningMiddleware } from '../../utils/floating';
 import { buildTooltipTheme, getPlacement } from '../../utils/tooltipUtils';
 import { Portal } from '../Portal/Portal';
 
@@ -39,19 +39,14 @@ export const Tooltip = forwardRef<HTMLElement, TooltipProps>(
     const arrowRef = useRef(null);
     const [controlledVisible, setControlledVisible] = useState(show);
     const isOpen = show ?? controlledVisible;
+    const floatingUIPlacement = getPlacement(placement);
 
     // the order of middleware is important!
     // `arrow` should almost always be at the end
     // see https://floating-ui.com/docs/arrow#order
     const middleware = [
       offset(8),
-      flip({
-        fallbackAxisSideDirection: 'end',
-        // see https://floating-ui.com/docs/flip#combining-with-shift
-        crossAxis: false,
-        boundary: document.body,
-      }),
-      shift(),
+      ...getPositioningMiddleware(floatingUIPlacement),
       arrow({
         element: arrowRef,
       }),
@@ -59,7 +54,7 @@ export const Tooltip = forwardRef<HTMLElement, TooltipProps>(
 
     const { context, refs, floatingStyles } = useFloating({
       open: isOpen,
-      placement: getPlacement(placement),
+      placement: floatingUIPlacement,
       onOpenChange: setControlledVisible,
       middleware,
       whileElementsMounted: autoUpdate,
@@ -67,9 +62,7 @@ export const Tooltip = forwardRef<HTMLElement, TooltipProps>(
     const tooltipId = useId();
 
     const hover = useHover(context, {
-      delay: {
-        close: interactive ? 100 : 0,
-      },
+      handleClose: interactive ? safePolygon() : undefined,
       move: false,
     });
     const focus = useFocus(context);

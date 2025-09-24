@@ -5,7 +5,7 @@ import { PluginType } from '@grafana/data';
 import { config } from '@grafana/runtime';
 import { configureStore } from 'app/store/configureStore';
 
-import { getCatalogPluginMock } from '../__mocks__';
+import { getCatalogPluginMock } from '../mocks/mockHelpers';
 import { PluginTabIds } from '../types';
 
 import { PluginDetailsBody } from './PluginDetailsBody';
@@ -22,12 +22,6 @@ describe('PluginDetailsBody', () => {
       name: 'renderer type plugin',
       plugin: {
         type: PluginType.renderer,
-      },
-    },
-    {
-      name: 'secrets manager type plugin',
-      plugin: {
-        type: PluginType.secretsmanager,
       },
     },
     {
@@ -98,5 +92,23 @@ describe('PluginDetailsBody', () => {
         expect(button).toHaveAttribute('aria-disabled', 'true');
       });
     });
+  });
+
+  it('should render data source connections tab content for installed data source plugin', async () => {
+    const plugin = getCatalogPluginMock({ type: PluginType.datasource });
+    config.featureToggles.datasourceConnectionsTab = true;
+    await act(async () => {
+      renderWithStore(
+        <PluginDetailsBody
+          plugin={plugin}
+          info={[]}
+          queryParams={{}}
+          pageId={PluginTabIds.DATASOURCE_CONNECTIONS}
+          showDetails={false}
+        />
+      );
+    });
+
+    expect(screen.getByText('No data sources defined')).toBeVisible();
   });
 });

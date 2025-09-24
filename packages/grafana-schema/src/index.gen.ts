@@ -7,17 +7,6 @@
 //
 // Run 'make gen-cue' from repository root to regenerate.
 
-// Raw generated types from AccessPolicy kind.
-export type {
-  AccessPolicy,
-  RoleRef,
-  ResourceRef,
-  AccessRule
-} from './raw/accesspolicy/x/accesspolicy_types.gen';
-
-// Raw generated enums and default consts from accesspolicy kind.
-export { defaultAccessPolicy } from './raw/accesspolicy/x/accesspolicy_types.gen';
-
 // Raw generated types from Dashboard kind.
 export type {
   AnnotationTarget,
@@ -25,6 +14,14 @@ export type {
   VariableOption,
   DashboardLink,
   DashboardLinkType,
+  DashboardLinkPlacement,
+  ActionType,
+  FetchOptions,
+  InfinityOptions,
+  HttpRequestMethod,
+  ActionVariableType,
+  ActionVariable,
+  Action,
   VariableType,
   FieldColorSeriesByMode,
   FieldColor,
@@ -47,6 +44,9 @@ export {
   VariableRefresh,
   VariableSort,
   defaultDashboardLink,
+  defaultFetchOptions,
+  defaultInfinityOptions,
+  defaultAction,
   FieldColorModeId,
   defaultGridPos,
   ThresholdsMode,
@@ -73,6 +73,7 @@ export type {
   VariableModel,
   DataSourceRef,
   DataTransformerConfig,
+  TimeOption,
   TimePickerConfig,
   Panel,
   FieldConfigSource,
@@ -120,28 +121,3 @@ export type {
 //
 // TODO generate code such that tsc enforces type compatibility between raw and veneer decls
 export type { LibraryPanel } from './veneer/librarypanel.types';
-
-// Raw generated types from Preferences kind.
-export type {
-  Preferences,
-  QueryHistoryPreference,
-  CookiePreferences,
-  NavbarPreference
-} from './raw/preferences/x/preferences_types.gen';
-
-// Raw generated enums and default consts from preferences kind.
-export { defaultNavbarPreference } from './raw/preferences/x/preferences_types.gen';
-
-// Raw generated types from PublicDashboard kind.
-export type { PublicDashboard } from './raw/publicdashboard/x/publicdashboard_types.gen';
-
-// Raw generated types from Role kind.
-export type { Role } from './raw/role/x/role_types.gen';
-
-// Raw generated types from RoleBinding kind.
-export type {
-  RoleBinding,
-  CustomRoleRef,
-  BuiltinRoleRef,
-  RoleBindingSubject
-} from './raw/rolebinding/x/rolebinding_types.gen';

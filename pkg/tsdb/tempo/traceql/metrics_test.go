@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/data"
-	"github.com/grafana/grafana/pkg/tsdb/tempo/kinds/dataquery"
 	"github.com/grafana/tempo/pkg/tempopb"
 	v1 "github.com/grafana/tempo/pkg/tempopb/common/v1"
 	"github.com/stretchr/testify/assert"
@@ -13,9 +12,7 @@ import (
 
 func TestTransformMetricsResponse_EmptyResponse(t *testing.T) {
 	resp := tempopb.QueryRangeResponse{}
-	queryStr := ""
-	query := &dataquery.TempoQuery{Query: &queryStr}
-	frames := TransformMetricsResponse(query, resp)
+	frames := TransformMetricsResponse("", resp)
 	assert.Empty(t, frames)
 }
 
@@ -32,9 +29,7 @@ func TestTransformMetricsResponse_SingleSeriesSingleLabel(t *testing.T) {
 			},
 		},
 	}
-	queryStr := ""
-	query := &dataquery.TempoQuery{Query: &queryStr}
-	frames := TransformMetricsResponse(query, resp)
+	frames := TransformMetricsResponse("", resp)
 	assert.Len(t, frames, 1)
 	assert.Equal(t, "value1", frames[0].RefID)
 	assert.Equal(t, "value1", frames[0].Name)
@@ -47,9 +42,6 @@ func TestTransformMetricsResponse_SingleSeriesSingleLabel(t *testing.T) {
 }
 
 func TestTransformMetricsResponse_SingleSeriesMultipleLabels(t *testing.T) {
-	// Skipping for now because this test is broken.
-	t.Skip()
-
 	resp := tempopb.QueryRangeResponse{
 		Series: []*tempopb.TimeSeries{
 			{
@@ -65,9 +57,7 @@ func TestTransformMetricsResponse_SingleSeriesMultipleLabels(t *testing.T) {
 			},
 		},
 	}
-	queryStr := ""
-	query := &dataquery.TempoQuery{Query: &queryStr}
-	frames := TransformMetricsResponse(query, resp)
+	frames := TransformMetricsResponse("", resp)
 	assert.Len(t, frames, 1)
 	assert.Equal(t, "{label1=\"value1\", label2=123, label3=123.456, label4=true}", frames[0].RefID)
 	assert.Equal(t, "{label1=\"value1\", label2=123, label3=123.456, label4=true}", frames[0].Name)
@@ -100,9 +90,7 @@ func TestTransformMetricsResponse_MultipleSeries(t *testing.T) {
 			},
 		},
 	}
-	queryStr := ""
-	query := &dataquery.TempoQuery{Query: &queryStr}
-	frames := TransformMetricsResponse(query, resp)
+	frames := TransformMetricsResponse("", resp)
 	assert.Len(t, frames, 2)
 	assert.Equal(t, "value1", frames[0].RefID)
 	assert.Equal(t, "value1", frames[0].Name)
@@ -121,4 +109,33 @@ func TestTransformMetricsResponse_MultipleSeries(t *testing.T) {
 	assert.Equal(t, data.VisTypeGraph, frames[1].Meta.PreferredVisualization)
 	assert.Equal(t, time.UnixMilli(1638316800000), frames[1].Fields[0].At(0))
 	assert.Equal(t, 4.56, frames[1].Fields[1].At(0))
+}
+
+func TestTransformInstantMetricsResponse(t *testing.T) {
+	resp := tempopb.QueryInstantResponse{
+		Series: []*tempopb.InstantSeries{
+			{
+				Value:      123.45,
+				PromLabels: "label=\"value\"",
+			},
+		},
+	}
+
+	frames := TransformInstantMetricsResponse(resp)
+
+	assert.Len(t, frames, 1)
+	frame := frames[0]
+
+	assert.Len(t, frame.Fields, 2)
+
+	timeField := frame.Fields[0]
+	assert.Equal(t, "time", timeField.Name)
+	assert.Equal(t, 1, timeField.Len())
+	assert.IsType(t, time.Time{}, timeField.At(0))
+
+	valueField := frame.Fields[1]
+	assert.Equal(t, "value", valueField.Name)
+	assert.Equal(t, 1, valueField.Len())
+	assert.IsType(t, 0.0, valueField.At(0))
+	assert.Equal(t, 123.45, valueField.At(0).(float64))
 }

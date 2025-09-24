@@ -33,10 +33,11 @@ import { GrafanaQueryType } from 'app/plugins/datasource/grafana/types';
 import { DashboardDataLayerSet } from '../scene/DashboardDataLayerSet';
 import { DashboardScene } from '../scene/DashboardScene';
 import { PanelTimeRange } from '../scene/PanelTimeRange';
-import { RowRepeaterBehavior } from '../scene/RowRepeaterBehavior';
 import { DashboardGridItem } from '../scene/layout-default/DashboardGridItem';
 import { DefaultGridLayoutManager } from '../scene/layout-default/DefaultGridLayoutManager';
+import { RowRepeaterBehavior } from '../scene/layout-default/RowRepeaterBehavior';
 import { dashboardSceneGraph } from '../utils/dashboardSceneGraph';
+import { djb2Hash } from '../utils/djb2Hash';
 import {
   calculateGridItemDimensions,
   getLibraryPanelBehavior,
@@ -72,9 +73,10 @@ export function transformSceneToSaveModel(scene: DashboardScene, isSnapshot = fa
 
       if (child instanceof SceneGridRow) {
         // Skip repeat clones or when generating a snapshot
-        if (child.state.key!.indexOf('-clone-') > 0 && !isSnapshot) {
+        if (child.state.repeatSourceKey && !isSnapshot) {
           continue;
         }
+
         gridRowToSaveModel(child, panels, isSnapshot);
       }
     }
@@ -99,6 +101,7 @@ export function transformSceneToSaveModel(scene: DashboardScene, isSnapshot = fa
       refresh_intervals: refreshPicker?.state.intervals,
       hidden: controlsState?.hideTimeControls,
       nowDelay: timeRange.UNSAFE_nowDelay,
+      quick_ranges: controlsState?.timePicker.state.quickRanges,
     },
     defaultTimePickerConfig
   );
@@ -140,9 +143,11 @@ export function transformSceneToSaveModel(scene: DashboardScene, isSnapshot = fa
     liveNow,
     schemaVersion: DASHBOARD_SCHEMA_VERSION,
     refresh: refreshPicker?.state.refresh,
+    // @ts-expect-error not in dashboard schema because it's experimental
+    scopeMeta: state.scopeMeta,
   };
 
-  return sortedDeepCloneWithoutNulls(dashboard);
+  return sortedDeepCloneWithoutNulls(dashboard, true);
 }
 
 export function gridItemToPanel(gridItem: DashboardGridItem, isSnapshot = false): Panel {
@@ -186,12 +191,13 @@ export function vizPanelToPanel(
 
     panel = {
       id: getPanelIdForVizPanel(vizPanel),
-      title: libPanel!.state.title,
+      title: vizPanel.state.title,
       gridPos: gridPos,
       libraryPanel: {
         name: libPanel!.state.name,
         uid: libPanel!.state.uid,
       },
+      type: 'library-panel-ref',
     } as Panel;
 
     return panel;
@@ -324,48 +330,46 @@ export function panelRepeaterToPanels(repeater: DashboardGridItem, isSnapshot = 
       return [vizPanelToPanel(repeater.state.body, { x, y, w, h }, isSnapshot)];
     }
 
-    if (repeater.state.repeatedPanels) {
-      const { h, w, columnCount } = calculateGridItemDimensions(repeater);
-      const panels = repeater.state.repeatedPanels!.map((panel, index) => {
-        let x = 0,
-          y = 0;
-        if (repeater.state.repeatDirection === 'v') {
-          x = repeater.state.x!;
-          y = index * h;
-        } else {
-          x = (index % columnCount) * w;
-          y = repeater.state.y! + Math.floor(index / columnCount) * h;
-        }
+    const vizPanels = [repeater.state.body, ...(repeater.state.repeatedPanels ?? [])];
 
-        const gridPos = { x, y, w, h };
+    const { h, w, columnCount } = calculateGridItemDimensions(repeater);
+    const panels = vizPanels.map((panel, index) => {
+      let x = 0,
+        y = 0;
+      if (repeater.state.repeatDirection === 'v') {
+        x = repeater.state.x!;
+        y = repeater.state.y! + index * h;
+      } else {
+        x = (index % columnCount) * w;
+        y = repeater.state.y! + Math.floor(index / columnCount) * h;
+      }
 
-        const localVariable = panel.state.$variables!.getByName(repeater.state.variableName!) as LocalValueVariable;
+      const gridPos = { x, y, w, h };
 
-        const result: Panel = {
-          id: getPanelIdForVizPanel(panel),
-          type: panel.state.pluginId,
-          title: panel.state.title,
-          gridPos,
-          options: panel.state.options,
-          fieldConfig: (panel.state.fieldConfig as FieldConfigSource) ?? { defaults: {}, overrides: [] },
-          transformations: [],
-          transparent: panel.state.displayMode === 'transparent',
-          // @ts-expect-error scopedVars are runtime only properties, not part of the persisted Dashboardmodel
-          scopedVars: {
-            [repeater.state.variableName!]: {
-              text: localVariable?.state.text,
-              value: localVariable?.state.value,
-            },
+      const localVariable = panel.state.$variables!.getByName(repeater.state.variableName!) as LocalValueVariable;
+
+      const result: Panel = {
+        id: djb2Hash(panel.state.key!),
+        type: panel.state.pluginId,
+        title: panel.state.title,
+        gridPos,
+        options: panel.state.options,
+        fieldConfig: (panel.state.fieldConfig as FieldConfigSource) ?? { defaults: {}, overrides: [] },
+        transformations: [],
+        transparent: panel.state.displayMode === 'transparent',
+        // @ts-expect-error scopedVars are runtime only properties, not part of the persisted Dashboardmodel
+        scopedVars: {
+          [repeater.state.variableName!]: {
+            text: localVariable?.state.text,
+            value: localVariable?.state.value,
           },
-          ...vizPanelDataToPanel(panel, isSnapshot),
-        };
-        return result;
-      });
+        },
+        ...vizPanelDataToPanel(panel, isSnapshot),
+      };
+      return result;
+    });
 
-      return panels;
-    }
-
-    return [];
+    return panels;
   }
 }
 

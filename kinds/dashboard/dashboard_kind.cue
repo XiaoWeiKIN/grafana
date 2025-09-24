@@ -74,7 +74,7 @@ lineage: schemas: [{
 
 			// Version of the JSON schema, incremented each time a Grafana update brings
 			// changes to said schema.
-			schemaVersion: uint16 | *39
+			schemaVersion: uint16 | *42
 
 			// Version of the dashboard, incremented each time the dashboard is updated.
 			version?: uint32
@@ -215,6 +215,10 @@ lineage: schemas: [{
 			// Optional field, if you want to extract part of a series name or metric node segment.
 			// Named capture groups can be used to separate the display text and value.
 			regex?: string
+			// Additional static options for query variable
+			staticOptions?: [...#VariableOption]
+			// Ordering of static options in relation to options returned from data source for query variable
+			staticOptionsOrder?: "before" | "after" | "sorted"
 			...
 		} @cuetsy(kind="interface") @grafana(TSVeneer="type") @grafanamaturity(NeedsExpertReview)
 
@@ -235,8 +239,8 @@ lineage: schemas: [{
 		#VariableRefresh: 0 | 1 | 2 @cuetsy(kind="enum",memberNames="never|onDashboardLoad|onTimeRangeChanged")
 
 		// Determine if the variable shows on dashboard
-		// Accepted values are 0 (show label and value), 1 (show value only), 2 (show nothing).
-		#VariableHide: 0 | 1 | 2 @cuetsy(kind="enum",memberNames="dontHide|hideLabel|hideVariable") @grafana(TSVeneer="type")
+		// Accepted values are 0 (show label and value), 1 (show value only), 2 (show nothing), 3 (show under the controls dropdown menu).
+		#VariableHide: 0 | 1 | 2 | 3 @cuetsy(kind="enum",memberNames="dontHide|hideLabel|hideVariable|inControlsMenu") @grafana(TSVeneer="type")
 
 		// Sort variable options
 		// Accepted values are:
@@ -276,16 +280,76 @@ lineage: schemas: [{
 			tags: [...string]
 			// If true, all dashboards links will be displayed in a dropdown. If false, all dashboards links will be displayed side by side. Only valid if the type is dashboards
 			asDropdown: bool | *false
+			// Placement can be used to display the link somewhere else on the dashboard other than above the visualisations.
+			placement?: #DashboardLinkPlacement
 			// If true, the link will be opened in a new tab
 			targetBlank: bool | *false
 			// If true, includes current template variables values in the link as query params
 			includeVars: bool | *false
 			// If true, includes current time range in the link as query params
 			keepTime: bool | *false
+
 		} @cuetsy(kind="interface")
 
 		// Dashboard Link type. Accepted values are dashboards (to refer to another dashboard) and link (to refer to an external resource)
 		#DashboardLinkType: "link" | "dashboards" @cuetsy(kind="type")
+
+		// Dashboard Link placement. Defines where the link should be displayed. 
+		// - "inControlsMenu" renders the link in bottom part of the dashboard controls dropdown menu 
+		#DashboardLinkPlacement: "inControlsMenu" @cuetsy(kind="type")
+
+		// Dashboard action type
+		#ActionType: "fetch" | "infinity" @cuetsy(kind="type")
+
+		// Fetch options
+		#FetchOptions: {
+			method: #HttpRequestMethod
+			url: string
+			body?: string
+			// These are 2D arrays of strings, each representing a key-value pair
+			// We are defining this way because we can't generate a go struct that 
+			// that would have exactly two strings in each sub-array
+			queryParams?: [...[...string]]
+			headers?: [...[...string]]
+		} @cuetsy(kind="interface")
+
+		// Infinity options
+		#InfinityOptions: {
+			method: #HttpRequestMethod
+			url: string
+			body?: string
+			// These are 2D arrays of strings, each representing a key-value pair
+			// We are defining them this way because we can't generate a go struct that 
+			// that would have exactly two strings in each sub-array
+			queryParams?: [...[...string]]
+			headers?: [...[...string]]
+			datasourceUid: string
+		} @cuetsy(kind="interface")
+
+		#HttpRequestMethod: "GET" | "PUT" | "POST" | "DELETE" | "PATCH" @cuetsy(kind="type")
+
+		// Action variable type
+		#ActionVariableType: "string" @cuetsy(kind="type")
+
+		#ActionVariable: {
+			key: string
+			name: string
+			type: #ActionVariableType
+		} @cuetsy(kind="interface")
+
+		// Dashboard action
+		#Action: {
+			type: #ActionType
+			title: string
+			fetch?: #FetchOptions
+			infinity?: #InfinityOptions
+			confirmation?: string
+			oneClick?: bool
+			variables?: [...#ActionVariable]
+			style?: {
+				backgroundColor?: string
+			}
+		} @cuetsy(kind="interface")
 
 		// Dashboard variable type
 		// `query`: Query-generated list of values such as metric names, server names, sensor IDs, data centers, and so on.
@@ -459,6 +523,13 @@ lineage: schemas: [{
 			options: _
 		} @cuetsy(kind="interface") @grafana(TSVeneer="type")
 
+		// Counterpart for TypeScript's TimeOption type.
+		#TimeOption: {
+			display: string
+			from:    string
+			to:      string
+		} @cuetsy(kind="interface") @grafana(TSVeneer="type")
+
 		// Time picker configuration
 		// It defines the default config for the time picker and the refresh picker for the specific dashboard.
 		#TimePickerConfig: {
@@ -466,8 +537,8 @@ lineage: schemas: [{
 			hidden?: bool | *false
 			// Interval options available in the refresh picker dropdown.
 			refresh_intervals?: [...string] | *["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"]
-			// Selectable options available in the time picker dropdown. Has no effect on provisioned dashboard.
-			time_options?: [...string] | *["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+			// Quick ranges for time picker.
+			quick_ranges?: [...#TimeOption]
 			// Override the now time by entering a time delay. Use this option to accommodate known delays in data aggregation to avoid null values.
 			nowDelay?: string
 		} @cuetsy(kind="interface") @grafana(TSVeneer="type")
@@ -708,6 +779,9 @@ lineage: schemas: [{
 
 			// The behavior when clicking on a result
 			links?: [...] @grafanamaturity(NeedsExpertReview)
+
+			// Define interactive HTTP requests that can be triggered from data visualizations.
+			actions?: [...#Action] @grafanamaturity(NeedsExpertReview)
 
 			// Alternative to empty string
 			noValue?: string @grafanamaturity(NeedsExpertReview)

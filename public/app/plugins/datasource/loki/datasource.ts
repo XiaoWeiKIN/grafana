@@ -46,7 +46,6 @@ import {
 import { Duration } from '@grafana/lezer-logql';
 import { BackendSrvRequest, config, DataSourceWithBackend, getTemplateSrv, TemplateSrv } from '@grafana/runtime';
 import { DataQuery } from '@grafana/schema';
-import { getDashboardSrv } from 'app/features/dashboard/services/DashboardSrv';
 
 import LanguageProvider from './LanguageProvider';
 import { LiveStreams, LokiLiveTarget } from './LiveStreams';
@@ -148,7 +147,6 @@ export class LokiDatasource
   private logContextProvider: LogContextProvider;
   languageProvider: LanguageProvider;
   maxLines: number;
-  predefinedOperations: string;
 
   constructor(
     private instanceSettings: DataSourceInstanceSettings<LokiOptions>,
@@ -159,13 +157,16 @@ export class LokiDatasource
     this.languageProvider = new LanguageProvider(this);
     const settingsData = instanceSettings.jsonData || {};
     this.maxLines = parseInt(settingsData.maxLines ?? '0', 10) || DEFAULT_MAX_LINES;
-    this.predefinedOperations = settingsData.predefinedOperations ?? '';
     this.annotations = {
       QueryEditor: LokiAnnotationsQueryEditor,
     };
     this.variables = new LokiVariableSupport(this);
     this.logContextProvider = new LogContextProvider(this);
+    this.supportsAdjustableWindow = true;
   }
+
+  // Flag marking datasource as supporting adjusting the time range window in the logs context window: https://github.com/grafana/grafana/pull/109901
+  public supportsAdjustableWindow;
 
   /**
    * Implemented for DataSourceWithSupplementaryQueriesSupport.
@@ -206,6 +207,10 @@ export class LokiDatasource
    * @returns A supplemented Loki query or undefined if unsupported.
    */
   getSupplementaryQuery(options: SupplementaryQueryOptions, query: LokiQuery): LokiQuery | undefined {
+    if (query.hide) {
+      return undefined;
+    }
+
     const normalizedQuery = getNormalizedLokiQuery(query);
     let expr = removeCommentsFromQuery(normalizedQuery.expr);
     let isQuerySuitable = false;
@@ -291,33 +296,6 @@ export class LokiDatasource
     return { ...logsSampleRequest, targets };
   }
 
-  private getQueryHeaders(request: DataQueryRequest<LokiQuery>): Record<string, string> {
-    const headers: Record<string, string> = {};
-    if (!config.featureToggles.lokiSendDashboardPanelNames) {
-      return headers;
-    }
-    // only add headers if we are in the context of a dashboard
-    if (
-      [CoreApp.Dashboard.toString(), CoreApp.PanelEditor.toString(), CoreApp.PanelViewer.toString()].includes(
-        request.app
-      ) === false
-    ) {
-      return headers;
-    }
-
-    const dashboard = getDashboardSrv().getCurrent();
-    const dashboardTitle = dashboard?.title;
-    const panelTitle = dashboard?.panels.find((p) => p.id === request?.panelId)?.title;
-    if (dashboardTitle) {
-      headers['X-Dashboard-Title'] = dashboardTitle;
-    }
-    if (panelTitle) {
-      headers['X-Panel-Title'] = panelTitle;
-    }
-
-    return headers;
-  }
-
   /**
    * Required by DataSourceApi. It executes queries based on the provided DataQueryRequest.
    * @returns An Observable of DataQueryResponse containing the query results.
@@ -325,14 +303,19 @@ export class LokiDatasource
   query(request: DataQueryRequest<LokiQuery>): Observable<DataQueryResponse> {
     const queries = request.targets
       .map(getNormalizedLokiQuery) // used to "fix" the deprecated `.queryType` prop
-      .map((q) => ({ ...q, maxLines: q.maxLines ?? this.maxLines }));
+      .map((q) => ({
+        ...q,
+        maxLines: q.maxLines ?? this.maxLines,
+        scopes:
+          config.featureToggles.scopeFilters && config.featureToggles.logQLScope
+            ? request.scopes?.flatMap((scope) => scope.spec.filters)
+            : undefined,
+      }));
 
     const fixedRequest: DataQueryRequest<LokiQuery> = {
       ...request,
       targets: queries,
     };
-
-    fixedRequest.headers = this.getQueryHeaders(request);
 
     const streamQueries = fixedRequest.targets.filter((q) => q.queryType === LokiQueryType.Stream);
     if (
@@ -368,11 +351,7 @@ export class LokiDatasource
     }
 
     const startTime = new Date();
-    return this.runQuery(fixedRequest).pipe(
-      tap((response) =>
-        trackQuery(response, fixedRequest, startTime, { predefinedOperations: this.predefinedOperations })
-      )
-    );
+    return this.runQuery(fixedRequest).pipe(tap((response) => trackQuery(response, fixedRequest, startTime)));
   }
 
   /**
@@ -541,6 +520,11 @@ export class LokiDatasource
     // detected_field/${label}/values has different structure then other metadata responses
     if (!res.data && res.values) {
       return res.values ?? [];
+    }
+
+    // detected_fields has a different return structure then other metadata responses
+    if (!res.data && res.fields) {
+      return res.fields ?? [];
     }
     return res.data ?? [];
   }
@@ -759,14 +743,28 @@ export class LokiDatasource
    * Currently, it works for logs data only.
    * @returns A Promise that resolves to an array of DataFrames containing data samples.
    */
-  async getDataSamples(query: LokiQuery, timeRange: TimeRange): Promise<DataFrame[]> {
-    // Currently works only for logs sample
-    if (!isLogsQuery(query.expr) || isQueryWithError(this.interpolateString(query.expr, placeHolderScopedVars))) {
+  async getDataSamples(
+    query: LokiQuery,
+    timeRange: TimeRange,
+    options?: { convertMetricQueryToLogQuery?: boolean }
+  ): Promise<DataFrame[]> {
+    let queryExpr = query.expr;
+    if (isQueryWithError(this.interpolateString(queryExpr, placeHolderScopedVars))) {
       return [];
     }
 
+    if (!isLogsQuery(queryExpr)) {
+      // If it is not a logs query, we need to check if we need to convert it to a logs query
+      if (options?.convertMetricQueryToLogQuery) {
+        queryExpr = getLogQueryFromMetricsQuery(queryExpr);
+      } else {
+        // Otherwise, we return an empty array, as data samples are only supported for logs queries
+        return [];
+      }
+    }
+
     const lokiLogsQuery: LokiQuery = {
-      expr: query.expr,
+      expr: queryExpr,
       queryType: LokiQueryType.Range,
       refId: REF_ID_DATA_SAMPLES,
       maxLines: query.maxLines || DEFAULT_MAX_LINES_SAMPLE,
@@ -1005,8 +1003,18 @@ export class LokiDatasource
    * Part of `DataSourceWithLogsContextSupport`, used to retrieve the log context UI for the provided log row and original query.
    * @returns A React component or element representing the log context UI for the log row.
    */
-  getLogRowContextUi(row: LogRowModel, runContextQuery: () => void, origQuery: DataQuery): React.ReactNode {
-    return this.logContextProvider.getLogRowContextUi(row, runContextQuery, getLokiQueryFromDataQuery(origQuery));
+  getLogRowContextUi(
+    row: LogRowModel,
+    runContextQuery: () => void,
+    origQuery: DataQuery,
+    scopedVars?: ScopedVars
+  ): React.ReactNode {
+    return this.logContextProvider.getLogRowContextUi(
+      row,
+      runContextQuery,
+      getLokiQueryFromDataQuery(origQuery),
+      scopedVars
+    );
   }
 
   /**

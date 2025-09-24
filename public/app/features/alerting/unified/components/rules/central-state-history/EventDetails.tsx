@@ -3,9 +3,10 @@ import { capitalize, groupBy } from 'lodash';
 import { useEffect, useMemo } from 'react';
 
 import { DataFrame, DataFrameJSON, GrafanaTheme2, TimeRange } from '@grafana/data';
+import { Trans, t } from '@grafana/i18n';
 import { Icon, Stack, Text, useStyles2, useTheme2 } from '@grafana/ui';
-import { Trans, t } from 'app/core/internationalization';
 import { CombinedRule } from 'app/types/unified-alerting';
+import { GrafanaAlertState, mapStateWithReasonToBaseState } from 'app/types/unified-alerting-dto';
 
 import { trackUseCentralHistoryExpandRow } from '../../../Analytics';
 import { stateHistoryApi } from '../../../api/stateHistoryApi';
@@ -15,6 +16,7 @@ import { parsePromQLStyleMatcherLooseSafe } from '../../../utils/matchers';
 import { parse } from '../../../utils/rule-id';
 import { MetaText } from '../../MetaText';
 import { AnnotationValue } from '../../rule-viewer/tabs/Details';
+import { ErrorMessageRow } from '../state-history/ErrorMessageRow';
 import { LogTimelineViewer } from '../state-history/LogTimelineViewer';
 import { useFrameSubset } from '../state-history/LokiStateHistory';
 import { LogRecord } from '../state-history/common';
@@ -72,6 +74,9 @@ export function EventDetails({ record, addFilter, timeRange }: EventDetailsProps
         <StateTransition record={record} addFilter={addFilter} />
         <ValueInTransition record={record} />
       </Stack>
+      {mapStateWithReasonToBaseState(record.line.current) === GrafanaAlertState.Error && record.line.error && (
+        <ErrorMessageRow message={record.line.error} />
+      )}
       <Annotations rule={rule} />
       <StateVisualization ruleUID={ruleUID} timeRange={timeRange} labels={labelsInInstance ?? {}} />
     </Stack>
@@ -220,19 +225,17 @@ const Annotations = ({ rule }: AnnotationsProps) => {
     return null;
   }
   return (
-    <>
-      <div className={styles.metadataWrapper}>
-        {Object.entries(annotations).map(([name, value]) => {
-          const capitalizedName = capitalize(name);
-          return (
-            <MetaText direction="column" key={capitalizedName}>
-              {capitalizedName}
-              <AnnotationValue value={value} />
-            </MetaText>
-          );
-        })}
-      </div>
-    </>
+    <div className={styles.metadataWrapper}>
+      {Object.entries(annotations).map(([name, value]) => {
+        const capitalizedName = capitalize(name);
+        return (
+          <MetaText direction="column" key={capitalizedName}>
+            {capitalizedName}
+            <AnnotationValue value={value} />
+          </MetaText>
+        );
+      })}
+    </div>
   );
 };
 interface ValueInTransitionProps {
