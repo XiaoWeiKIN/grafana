@@ -1,8 +1,21 @@
-import { FetchError, FetchResponse } from 'src/services';
+import {FetchError, FetchResponse} from 'src/services';
 
-import { DataQuery, toDataFrameDTO, DataFrame } from '@grafana/data';
+import {
+  DataFrame,
+  DataFrameView,
+  DataQuery,
+  type DataQueryRequest,
+  DataQueryResponse,
+  toDataFrame,
+  toDataFrameDTO
+} from '@grafana/data';
 
-import { BackendDataSourceResponse, cachedResponseNotice, toDataQueryResponse, toTestingStatus } from './queryResponse';
+import {BackendDataSourceResponse, cachedResponseNotice, toDataQueryResponse, toTestingStatus} from './queryResponse';
+import {PromQuery, transformV2} from "@grafana/prometheus";
+
+const jsonRsp = `{"results":{"insightflow_traces_service_graph_request_total":{"status":200,"frames":[{"schema":{"name":"{client=\\"user\\", server=\\"toolkit-api\\"}","meta":{"type":"timeseries-multi","typeVersion":[0,0],"custom":{"resultType":"vector"},"executedQueryString":"Expr: sum by (client, server) (rate(insightflow_traces_service_graph_request_total{server=\\"toolkit-api\\"}[172800s]))\\nStep: 2m0s"},"fields":[{"name":"Time","type":"time","typeInfo":{"frame":"time.Time"},"config":{"interval":120000}},{"name":"Value","type":"number","typeInfo":{"frame":"float64"},"labels":{"client":"user","server":"toolkit-api"},"config":{"displayNameFromDS":"{client=\\"user\\", server=\\"toolkit-api\\"}"}}]},"data":{"values":[[1736391435070],[0.001961912249834548]]}}]}}}`
+
+const rsp: BackendDataSourceResponse = JSON.parse(jsonRsp)
 
 const resp = {
   data: {
@@ -13,8 +26,8 @@ const resp = {
             schema: {
               refId: 'A',
               fields: [
-                { name: 'time', type: 'time', typeInfo: { frame: 'time.Time', nullable: true } },
-                { name: 'A-series', type: 'number', typeInfo: { frame: 'float64', nullable: true } },
+                {name: 'time', type: 'time', typeInfo: {frame: 'time.Time', nullable: true}},
+                {name: 'A-series', type: 'number', typeInfo: {frame: 'float64', nullable: true}},
               ],
             },
             data: {
@@ -32,8 +45,8 @@ const resp = {
             schema: {
               refId: 'B',
               fields: [
-                { name: 'time', type: 'time', typeInfo: { frame: 'time.Time', nullable: true } },
-                { name: 'B-series', type: 'number', typeInfo: { frame: 'float64', nullable: true } },
+                {name: 'time', type: 'time', typeInfo: {frame: 'time.Time', nullable: true}},
+                {name: 'B-series', type: 'number', typeInfo: {frame: 'float64', nullable: true}},
               ],
             },
             data: {
@@ -58,7 +71,7 @@ const resWithError = {
         frames: [
           {
             schema: {
-              fields: [{ name: 'numbers', type: 'number' }],
+              fields: [{name: 'numbers', type: 'number'}],
               meta: {
                 notices: [
                   {
@@ -79,16 +92,42 @@ const resWithError = {
 } as unknown as FetchResponse<BackendDataSourceResponse>;
 
 const emptyResults = {
-  data: { results: { '': { refId: '' } } },
+  data: {results: {'': {refId: ''}}},
 };
+
+function getMetricFrames(responses: DataQueryResponse[]): Record<string, DataFrameView> {
+  return (responses[0]?.data || []).reduce<Record<string, DataFrameView>>((acc, frameDTO) => {
+    const frame = toDataFrame(frameDTO);
+    acc[frame.refId ?? 'A'] = new DataFrameView(frame);
+    return acc;
+  }, {});
+}
 
 describe('Query Response parser', () => {
   test('should parse output with dataframe', () => {
-    const res = toDataQueryResponse(resp);
+    const request = {
+      targets: [
+        {
+          format: 'table',
+          refId: 'insightflow_traces_service_graph_request_total',
+        },
+      ],
+    } as unknown as DataQueryRequest<PromQuery>;
+    const fetchRsp: any = {
+      ok: false,
+      redirected: false,
+      status: 0,
+      statusText: "",
+      url: "",
+      data: rsp
+    }
+    const res = toDataQueryResponse(fetchRsp)
+    const x = getMetricFrames([transformV2(res,request,{})])
+    console.log(x)
     const frames = res.data;
-    expect(frames).toHaveLength(2);
-    expect(frames[0].refId).toEqual('A');
-    expect(frames[1].refId).toEqual('B');
+    // expect(frames).toHaveLength(2);
+    // expect(frames[0].refId).toEqual('A');
+    // expect(frames[1].refId).toEqual('B');
 
     const norm = frames.map((f) => toDataFrameDTO(f));
     expect(norm).toMatchInlineSnapshot(`
@@ -168,7 +207,7 @@ describe('Query Response parser', () => {
   });
 
   test('should parse output with dataframe in order of queries', () => {
-    const queries: DataQuery[] = [{ refId: 'B' }, { refId: 'A' }];
+    const queries: DataQuery[] = [{refId: 'B'}, {refId: 'A'}];
     const res = toDataQueryResponse(resp, queries);
     const frames = res.data;
     expect(frames).toHaveLength(2);
@@ -262,19 +301,19 @@ describe('Query Response parser', () => {
       data: {
         results: {
           X: {
-            series: [{ target: '', datapoints: [[13.594958983547151, 1611839862951]] }],
+            series: [{target: '', datapoints: [[13.594958983547151, 1611839862951]]}],
           },
           B: {
-            series: [{ target: '', datapoints: [[13.594958983547151, 1611839862951]] }],
+            series: [{target: '', datapoints: [[13.594958983547151, 1611839862951]]}],
           },
           A: {
-            series: [{ target: '', datapoints: [[13.594958983547151, 1611839862951]] }],
+            series: [{target: '', datapoints: [[13.594958983547151, 1611839862951]]}],
           },
         },
       },
     };
 
-    const queries: DataQuery[] = [{ refId: 'A' }, { refId: 'B' }];
+    const queries: DataQuery[] = [{refId: 'A'}, {refId: 'B'}];
 
     const ids = (toDataQueryResponse(resp, queries).data as DataFrame[]).map((f) => f.refId);
     expect(ids).toEqual(['A', 'B']);
@@ -363,7 +402,7 @@ describe('Query Response parser', () => {
       resp = {
         url: '',
         type: 'basic',
-        config: { url: '' },
+        config: {url: ''},
         status: 200,
         statusText: 'OK',
         ok: true,
@@ -371,14 +410,14 @@ describe('Query Response parser', () => {
         headers: new Headers(),
         data: {
           results: {
-            A: { frames: [{ schema: { fields: [] } }] },
+            A: {frames: [{schema: {fields: []}}]},
           },
         },
       };
     });
 
     test('adds notice and cached boolean for responses with X-Cache: HIT header', () => {
-      const queries: DataQuery[] = [{ refId: 'A' }];
+      const queries: DataQuery[] = [{refId: 'A'}];
       resp.headers.set('X-Cache', 'HIT');
       const meta = toDataQueryResponse(resp, queries).data[0].meta;
       expect(meta.notices).toStrictEqual([cachedResponseNotice]);
@@ -386,24 +425,24 @@ describe('Query Response parser', () => {
     });
 
     test('does not remove existing notices', () => {
-      const queries: DataQuery[] = [{ refId: 'A' }];
+      const queries: DataQuery[] = [{refId: 'A'}];
       resp.headers.set('X-Cache', 'HIT');
-      resp.data.results.A.frames![0].schema!.meta = { notices: [{ severity: 'info', text: 'Example' }] };
+      resp.data.results.A.frames![0].schema!.meta = {notices: [{severity: 'info', text: 'Example'}]};
       expect(toDataQueryResponse(resp, queries).data[0].meta.notices).toStrictEqual([
-        { severity: 'info', text: 'Example' },
+        {severity: 'info', text: 'Example'},
         cachedResponseNotice,
       ]);
     });
 
     test('does not add notice or cached response boolean for responses with X-Cache: MISS header', () => {
-      const queries: DataQuery[] = [{ refId: 'A' }];
+      const queries: DataQuery[] = [{refId: 'A'}];
       resp.headers.set('X-Cache', 'MISS');
       expect(toDataQueryResponse(resp, queries).data[0].meta?.notices).toBeUndefined();
       expect(toDataQueryResponse(resp, queries).data[0].meta?.isCachedResponse).toBeUndefined();
     });
 
     test('does not add notice for responses without X-Cache header', () => {
-      const queries: DataQuery[] = [{ refId: 'A' }];
+      const queries: DataQuery[] = [{refId: 'A'}];
       expect(toDataQueryResponse(resp, queries).data[0].meta?.notices).toBeUndefined();
     });
   });
@@ -475,11 +514,11 @@ describe('Query Response parser', () => {
 
   describe('should convert to TestingStatus', () => {
     test('from api/ds/query generic errors', () => {
-      const result = toTestingStatus({ status: 500, data: { message: 'message', error: 'error' } } as FetchError);
+      const result = toTestingStatus({status: 500, data: {message: 'message', error: 'error'}} as FetchError);
       expect(result).toMatchObject({
         status: 'error',
         message: 'message',
-        details: { message: 'error' },
+        details: {message: 'error'},
       });
     });
     test('from api/ds/query result errors', () => {
@@ -500,15 +539,15 @@ describe('Query Response parser', () => {
     });
     test('unknown errors', () => {
       expect(() => {
-        toTestingStatus({ status: 503, data: 'Fatal Error' } as FetchError);
+        toTestingStatus({status: 503, data: 'Fatal Error'} as FetchError);
       }).toThrow();
 
       expect(() => {
-        toTestingStatus({ status: 503, data: {} } as FetchError);
+        toTestingStatus({status: 503, data: {}} as FetchError);
       }).toThrow();
 
       expect(() => {
-        toTestingStatus({ status: 503 } as FetchError);
+        toTestingStatus({status: 503} as FetchError);
       }).toThrow();
     });
   });

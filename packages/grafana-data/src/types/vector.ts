@@ -7,7 +7,7 @@ declare global {
     /** @deprecated Use .push(value). This only exists to help migrate Vector to Array */
     add(value: T): void;
     /** @deprecated this is not necessary.  This only exists to help migrate Vector to Array */
-    toArray(): T[];
+      toArray(): T[];
   }
 }
 

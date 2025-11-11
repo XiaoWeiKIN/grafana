@@ -238,7 +238,6 @@ describe('Prometheus Result Transformer', () => {
         ],
       } as unknown as DataQueryResponse;
       const series = transformV2(response, request, {});
-
       expect(series.data[0].fields[0].name).toEqual('Time');
       expect(series.data[0].fields[1].name).toEqual('label1');
       expect(series.data[0].fields[2].name).toEqual('label2');

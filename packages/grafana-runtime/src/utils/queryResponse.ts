@@ -71,7 +71,6 @@ export function toDataQueryResponse(
   if (traceId != null) {
     rsp.traceIds = [traceId];
   }
-
   // If the response isn't in a correct shape we just ignore the data and pass empty DataQueryResponse.
   const fetchResponse = res as FetchResponse;
   if (fetchResponse.data?.results) {
@@ -153,7 +152,6 @@ export function toDataQueryResponse(
       rsp.error = toDataQueryError(res);
     }
   }
-
   return rsp;
 }
 
