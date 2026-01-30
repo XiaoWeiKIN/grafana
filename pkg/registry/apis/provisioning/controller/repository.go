@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/grafana/grafana-app-sdk/logging"
+	common "github.com/grafana/grafana/pkg/apimachinery/apis/common/v0alpha1"
+	"go.opentelemetry.io/otel/attribute"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -15,17 +18,17 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 
-	"github.com/grafana/grafana-app-sdk/logging"
 	provisioning "github.com/grafana/grafana/apps/provisioning/pkg/apis/provisioning/v0alpha1"
+	"github.com/grafana/grafana/apps/provisioning/pkg/connection"
 	client "github.com/grafana/grafana/apps/provisioning/pkg/generated/clientset/versioned/typed/provisioning/v0alpha1"
 	informer "github.com/grafana/grafana/apps/provisioning/pkg/generated/informers/externalversions/provisioning/v0alpha1"
 	listers "github.com/grafana/grafana/apps/provisioning/pkg/generated/listers/provisioning/v0alpha1"
+	"github.com/grafana/grafana/apps/provisioning/pkg/quotas"
 	"github.com/grafana/grafana/apps/provisioning/pkg/repository"
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/infra/tracing"
 	"github.com/grafana/grafana/pkg/registry/apis/provisioning/jobs"
 	"github.com/grafana/grafana/pkg/registry/apis/provisioning/resources"
-	"github.com/grafana/grafana/pkg/storage/legacysql/dualwrite"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -52,23 +55,29 @@ type RepositoryController struct {
 	repoLister listers.RepositoryLister
 	repoSynced cache.InformerSynced
 	logger     logging.Logger
-	dualwrite  dualwrite.Service
 
-	jobs          jobs.Queue
+	jobs interface {
+		jobs.Queue
+		jobs.Store
+	}
 	finalizer     finalizerProcessor
 	statusPatcher StatusPatcher
 
-	repoFactory   repository.Factory
-	healthChecker *HealthChecker
+	repoFactory       repository.Factory
+	connectionFactory connection.Factory
+	healthChecker     *RepositoryHealthChecker
 	// To allow injection for testing.
 	processFn         func(item *queueItem) error
 	enqueueRepository func(obj any)
 	keyFunc           func(obj any) (string, error)
 
-	queue workqueue.TypedRateLimitingInterface[*queueItem]
+	queue           workqueue.TypedRateLimitingInterface[*queueItem]
+	resyncInterval  time.Duration
+	minSyncInterval time.Duration
 
-	registry prometheus.Registerer
-	tracer   tracing.Tracer
+	registry    prometheus.Registerer
+	tracer      tracing.Tracer
+	quotaGetter quotas.QuotaGetter
 }
 
 // NewRepositoryController creates new RepositoryController.
@@ -76,15 +85,21 @@ func NewRepositoryController(
 	provisioningClient client.ProvisioningV0alpha1Interface,
 	repoInformer informer.RepositoryInformer,
 	repoFactory repository.Factory,
+	connectionFactory connection.Factory,
 	resourceLister resources.ResourceLister,
 	clients resources.ClientFactory,
-	jobs jobs.Queue,
-	dualwrite dualwrite.Service,
-	healthChecker *HealthChecker,
+	jobs interface {
+		jobs.Queue
+		jobs.Store
+	},
+	healthChecker *RepositoryHealthChecker,
 	statusPatcher StatusPatcher,
 	registry prometheus.Registerer,
 	tracer tracing.Tracer,
 	parallelOperations int,
+	resyncInterval time.Duration,
+	minSyncInterval time.Duration,
+	quotaGetter quotas.QuotaGetter,
 ) (*RepositoryController, error) {
 	finalizerMetrics := registerFinalizerMetrics(registry)
 
@@ -98,20 +113,23 @@ func NewRepositoryController(
 				Name: "provisioningRepositoryController",
 			},
 		),
-		repoFactory:   repoFactory,
-		healthChecker: healthChecker,
-		statusPatcher: statusPatcher,
+		repoFactory:       repoFactory,
+		connectionFactory: connectionFactory,
+		healthChecker:     healthChecker,
+		statusPatcher:     statusPatcher,
 		finalizer: &finalizer{
 			lister:        resourceLister,
 			clientFactory: clients,
 			metrics:       &finalizerMetrics,
 			maxWorkers:    parallelOperations,
 		},
-		jobs:      jobs,
-		logger:    logging.DefaultLogger.With("logger", loggerName),
-		dualwrite: dualwrite,
-		registry:  registry,
-		tracer:    tracer,
+		jobs:            jobs,
+		logger:          logging.DefaultLogger.With("logger", loggerName),
+		registry:        registry,
+		tracer:          tracer,
+		resyncInterval:  resyncInterval,
+		minSyncInterval: minSyncInterval,
+		quotaGetter:     quotaGetter,
 	}
 
 	_, err := repoInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -140,6 +158,9 @@ func repoKeyFunc(obj any) (string, error) {
 }
 
 // Run starts the RepositoryController.
+//
+// Note: This function intentionally does NOT create a tracing span because it runs indefinitely
+// until shutdown. Individual processing operations already have their own spans.
 func (rc *RepositoryController) Run(ctx context.Context, workerCount int) {
 	defer utilruntime.HandleCrash()
 	defer rc.queue.ShutDown()
@@ -269,7 +290,7 @@ func (rc *RepositoryController) updateDeleteStatus(ctx context.Context, obj *pro
 	})
 }
 
-func (rc *RepositoryController) shouldResync(obj *provisioning.Repository) bool {
+func (rc *RepositoryController) shouldResync(ctx context.Context, obj *provisioning.Repository) bool {
 	// don't trigger resync if a sync was never started
 	if obj.Status.Sync.Finished == 0 && obj.Status.Sync.State == "" {
 		return false
@@ -277,7 +298,36 @@ func (rc *RepositoryController) shouldResync(obj *provisioning.Repository) bool 
 
 	syncAge := time.Since(time.UnixMilli(obj.Status.Sync.Finished))
 	syncInterval := time.Duration(obj.Spec.Sync.IntervalSeconds) * time.Second
+	if syncInterval < rc.minSyncInterval {
+		// In case the sync interval is lower than the minimum sync interval set by the system
+		// we should default to the latter
+		syncInterval = rc.minSyncInterval
+	}
 	tolerance := time.Second
+
+	// Check for stale sync status - if sync status indicates a job is running but the job no longer exists
+	// Only check if Finished is set (meaning a sync has completed before) to avoid interfering with initial syncs
+	// Only trigger resync if sync is enabled and sync interval has elapsed (to avoid unnecessary operations)
+	if obj.Status.Sync.Finished > 0 &&
+		obj.Spec.Sync.Enabled &&
+		(obj.Status.Sync.State == provisioning.JobStatePending || obj.Status.Sync.State == provisioning.JobStateWorking) &&
+		obj.Status.Sync.JobID != "" {
+		_, err := rc.jobs.Get(ctx, obj.Namespace, obj.Status.Sync.JobID)
+		if apierrors.IsNotFound(err) {
+			// Job was cleaned up but sync status wasn't updated - trigger resync to reconcile
+			// Only trigger if sync interval has elapsed to avoid unnecessary operations
+			if syncAge >= (syncInterval - tolerance) {
+				logger := logging.FromContext(ctx)
+				logger.Info("detected stale sync status", "job_id", obj.Status.Sync.JobID)
+				return true
+			}
+		}
+		// For other errors, log but continue with normal logic
+		if err != nil {
+			logger := logging.FromContext(ctx)
+			logger.Warn("failed to check job existence for stale sync status", "error", err, "job_id", obj.Status.Sync.JobID)
+		}
+	}
 
 	// HACK: how would this work in a multi-tenant world or under heavy load?
 	// It will start queueing up jobs and we will have to deal with that
@@ -321,9 +371,6 @@ func (rc *RepositoryController) determineSyncStrategy(ctx context.Context, obj *
 		return nil
 	case !healthStatus.Healthy:
 		logger.Info("skip sync for unhealthy repository")
-		return nil
-	case rc.dualwrite != nil && dualwrite.IsReadingLegacyDashboardsAndFolders(ctx, rc.dualwrite):
-		logger.Info("skip sync as we are reading from legacy storage")
 		return nil
 	case healthStatus.Healthy != obj.Status.Health.Healthy:
 		logger.Info("repository became healthy, full resync")
@@ -386,21 +433,31 @@ func shouldUseIncrementalSync(ctx context.Context, versioned repository.Versione
 }
 
 func (rc *RepositoryController) addSyncJob(ctx context.Context, obj *provisioning.Repository, syncOptions *provisioning.SyncJobOptions) error {
+	ctx, span := rc.tracer.Start(ctx, "provisioning.controller.add_sync_job")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("repository", obj.GetName()),
+		attribute.String("namespace", obj.Namespace),
+		attribute.Bool("incremental", syncOptions != nil && syncOptions.Incremental),
+	)
+
 	job, err := rc.jobs.Insert(ctx, obj.Namespace, provisioning.JobSpec{
 		Repository: obj.GetName(),
 		Action:     provisioning.JobActionPull,
 		Pull:       syncOptions,
 	})
 	if apierrors.IsAlreadyExists(err) {
-		logging.FromContext(ctx).Info("sync job already exists, nothing triggered")
+		logging.FromContext(ctx).Info("sync job already exists")
 		return nil
 	}
 	if err != nil {
+		span.RecordError(err)
 		// FIXME: should we update the status of the repository if we fail to add the job?
 		return fmt.Errorf("error adding sync job: %w", err)
 	}
 
-	logging.FromContext(ctx).Info("sync job triggered", "job", job.Name)
+	span.SetAttributes(attribute.String("job.name", job.Name))
 	return nil
 }
 
@@ -476,10 +533,10 @@ func (rc *RepositoryController) process(item *queueItem) error {
 		return rc.handleDelete(ctx, obj)
 	}
 
-	shouldResync := rc.shouldResync(obj)
+	shouldResync := rc.shouldResync(ctx, obj)
 	shouldCheckHealth := rc.healthChecker.ShouldCheckHealth(obj)
 	hasSpecChanged := obj.Generation != obj.Status.ObservedGeneration
-	patchOperations := []map[string]interface{}{}
+	var patchOperations []map[string]interface{}
 
 	// Determine the main triggering condition
 	switch {
@@ -497,6 +554,35 @@ func (rc *RepositoryController) process(item *queueItem) error {
 	default:
 		logger.Info("skipping as conditions are not met", "status", obj.Status, "generation", obj.Generation, "sync_spec", obj.Spec.Sync)
 		return nil
+	}
+
+	if obj.Spec.Connection != nil && obj.Spec.Connection.Name != "" {
+		c, err := rc.client.Connections(obj.Namespace).Get(ctx, obj.Spec.Connection.Name, v1.GetOptions{})
+		if err != nil {
+			logger.Error("retrieving connection",
+				"connection", obj.Spec.Connection.Name,
+				"error", err,
+			)
+			return err
+		}
+
+		if rc.shouldGenerateTokenFromConnection(obj, c) {
+			logger.Info("updating token for repository", "connection", obj.Spec.Connection.Name)
+
+			token, tokenOps, err := rc.generateRepositoryToken(ctx, obj, c)
+			if err != nil {
+				logger.Error("generating token for repository",
+					"connection", obj.Spec.Connection.Name,
+					"error", err,
+				)
+				return err
+			}
+
+			if len(tokenOps) > 0 {
+				patchOperations = append(patchOperations, tokenOps...)
+			}
+			obj.Secure.Token.Create = token
+		}
 	}
 
 	repo, err := rc.repoFactory.Build(ctx, obj)
@@ -517,9 +603,39 @@ func (rc *RepositoryController) process(item *queueItem) error {
 	}
 
 	// Handle health checks using the health checker
-	_, healthStatus, err := rc.healthChecker.RefreshHealth(ctx, repo)
+	testResults, healthStatus, healthPatchOps, err := rc.healthChecker.RefreshHealthWithPatchOps(ctx, repo)
 	if err != nil {
 		return fmt.Errorf("update health status: %w", err)
+	}
+
+	// Add health patch operations first
+	if len(healthPatchOps) > 0 {
+		patchOperations = append(patchOperations, healthPatchOps...)
+	}
+
+	// Update fieldErrors from test results - always update to ensure fieldErrors are cleared when there are no errors
+	if testResults != nil {
+		fieldErrors := testResults.Errors
+		if fieldErrors == nil {
+			fieldErrors = []provisioning.ErrorDetails{}
+		}
+		patchOperations = append(patchOperations, map[string]interface{}{
+			"op":    "replace",
+			"path":  "/status/fieldErrors",
+			"value": fieldErrors,
+		})
+	}
+
+	// Set quota information from configuration (only if changed)
+	newQuota := rc.quotaGetter.GetQuotaStatus(ctx, namespace)
+	// Only update if the quota has changed
+	if obj.Status.Quota.MaxRepositories != newQuota.MaxRepositories ||
+		obj.Status.Quota.MaxResourcesPerRepository != newQuota.MaxResourcesPerRepository {
+		patchOperations = append(patchOperations, map[string]interface{}{
+			"op":    "replace",
+			"path":  "/status/quota",
+			"value": newQuota,
+		})
 	}
 
 	// determine the sync strategy and sync status to apply
@@ -570,4 +686,88 @@ func (rc *RepositoryController) processHooks(ctx context.Context, repo repositor
 	}
 
 	return hookOps, true, nil
+}
+
+// HACK: we need a proper way of doing this check by adding Conditions
+// We're going to work on this in https://github.com/grafana/git-ui-sync-project/issues/744.
+func (rc *RepositoryController) shouldGenerateTokenFromConnection(
+	obj *provisioning.Repository,
+	c *provisioning.Connection,
+) bool {
+	// Should always generate a token if it does not exist.
+	if obj.Secure.Token.IsZero() {
+		return true
+	}
+
+	// We should regenerate a token from the connection when
+	// - The token has not been recently created
+	// - The token will expire before the next resync interval
+	// - The linked connection is healthy (which means it is able to generate valid tokens)
+	recentlyCreated := tokenRecentlyCreated(time.UnixMilli(obj.Status.Token.LastUpdated))
+	shouldRefresh := shouldRefreshBeforeExpiration(
+		time.UnixMilli(obj.Status.Token.Expiration), rc.resyncInterval,
+	)
+	return !recentlyCreated &&
+		shouldRefresh &&
+		c.Status.Health.Healthy
+}
+
+func (rc *RepositoryController) generateRepositoryToken(
+	ctx context.Context,
+	obj *provisioning.Repository,
+	c *provisioning.Connection,
+) (common.RawSecureValue, []map[string]any, error) {
+	conn, err := rc.connectionFactory.Build(ctx, c)
+	if err != nil {
+		return "", nil, fmt.Errorf("unable to create connection from configuration: %w", err)
+	}
+
+	token, err := conn.GenerateRepositoryToken(ctx, obj)
+	if err != nil {
+		return "", nil, fmt.Errorf("unable to create token for repository: %w", err)
+	}
+
+	patchOperations := []map[string]any{
+		{
+			"op":   "replace",
+			"path": "/status/token",
+			"value": provisioning.TokenStatus{
+				LastUpdated: time.Now().UnixMilli(),
+				Expiration:  token.ExpiresAt.UnixMilli(),
+			},
+		},
+	}
+
+	// HACK - here we need to do different things based on the status of repository
+	// https://github.com/grafana/git-ui-sync-project/issues/745 to have a proper fix on it
+	switch {
+	case obj.Secure.IsZero():
+		patchOperations = append(patchOperations, map[string]any{
+			"op":   "add",
+			"path": "/secure",
+			"value": map[string]any{
+				"token": map[string]string{
+					"create": string(token.Token),
+				},
+			},
+		})
+	case obj.Secure.Token.IsZero():
+		patchOperations = append(patchOperations, map[string]any{
+			"op":   "add",
+			"path": "/secure/token",
+			"value": map[string]string{
+				"create": string(token.Token),
+			},
+		})
+	default:
+		patchOperations = append(patchOperations, map[string]any{
+			"op":   "replace",
+			"path": "/secure/token",
+			"value": map[string]string{
+				"create": string(token.Token),
+			},
+		})
+	}
+
+	return token.Token, patchOperations, nil
 }

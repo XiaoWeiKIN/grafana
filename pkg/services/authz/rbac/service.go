@@ -606,18 +606,23 @@ func (s *Service) checkPermission(ctx context.Context, scopeMap map[string]bool,
 	defer span.End()
 	ctxLogger := s.logger.FromContext(ctx)
 
-	// Only check action if the request doesn't specify scope
-	if req.Name == "" && req.Verb != utils.VerbCreate {
-		return len(scopeMap) > 0, nil
-	}
-
 	t, ok := s.mapper.Get(req.Group, req.Resource)
 	if !ok {
 		ctxLogger.Error("unsupport resource", "group", req.Group, "resource", req.Resource)
 		return false, status.Error(codes.NotFound, "unsupported resource")
 	}
 
+	if req.Name == "" && req.Verb != utils.VerbCreate {
+		// For resources that require a wildcard scope, we can perform the check immediately
+		if t.Scope("") == "*" {
+			return scopeMap["*"], nil
+		}
+		// Otherwise, only check action if the request doesn't specify scope
+		return len(scopeMap) > 0, nil
+	}
+
 	if t.SkipScope(req.Verb) {
+		// Resource doesn't require scope on this verb, so allow if the user has the action
 		return scopeMap[""], nil
 	}
 
@@ -626,18 +631,6 @@ func (s *Service) checkPermission(ctx context.Context, scopeMap map[string]bool,
 	if req.Verb == utils.VerbCreate && t.HasFolderSupport() && req.ParentFolder == "" {
 		req.ParentFolder = accesscontrol.GeneralFolderUID
 	}
-
-	//if req.Verb == utils.VerbCreate {
-	//	// Resource doesn't require scope on create, so allow if the user has the action
-	//	if t.SkipScopeOnCreate() {
-	//		return scopeMap[""], nil
-	//	}
-	//	// If creating a resource that goes in a folder, but no folder is specified,
-	//	// assume parent folder is the general folder
-	//	if t.HasFolderSupport() && req.ParentFolder == "" {
-	//		req.ParentFolder = accesscontrol.GeneralFolderUID
-	//	}
-	//}
 
 	// Wildcard grant, no further checks needed
 	if scopeMap["*"] {
@@ -793,7 +786,7 @@ func (s *Service) listPermission(ctx context.Context, scopeMap map[string]bool, 
 	}
 
 	var res *authzv1.ListResponse
-	if strings.HasPrefix(req.Action, "folders:") {
+	if strings.HasPrefix(req.Action, "folders:") || strings.HasPrefix(req.Action, "folders.permissions:") {
 		res = buildFolderList(scopeMap, tree)
 	} else {
 		res = buildItemList(scopeMap, tree, t.Prefix())

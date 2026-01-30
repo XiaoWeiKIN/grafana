@@ -2,8 +2,8 @@ import { useEffect } from 'react';
 import { useAsyncFn } from 'react-use';
 
 import { OrgRole } from '@grafana/data';
-import { contextSrv } from 'app/core/core';
-import { Role, AccessControlAction } from 'app/types/accessControl';
+import { contextSrv } from 'app/core/services/context_srv';
+import { AccessControlAction, Role } from 'app/types/accessControl';
 
 import { RolePicker } from './RolePicker';
 import { fetchUserRoles, updateUserRoles } from './api';
@@ -54,24 +54,25 @@ export const UserRolePicker = ({
   width,
   isLoading,
 }: Props) => {
-  const [{ loading, value: appliedRoles = roles || [] }, getUserRoles] = useAsyncFn(async () => {
-    try {
-      if (roles) {
-        return roles;
+  const [{ loading, value: appliedRoles = roles || [] }, getUserRoles] = useAsyncFn(
+    async (force = false) => {
+      try {
+        if (!force && roles) {
+          return roles;
+        }
+        if (!force && apply && Boolean(pendingRoles?.length)) {
+          return pendingRoles;
+        }
+        if (contextSrv.hasPermission(AccessControlAction.ActionUserRolesList) && userId > 0) {
+          return await fetchUserRoles(userId, orgId);
+        }
+      } catch (e) {
+        console.error('Error fetching user roles');
       }
-      if (apply && Boolean(pendingRoles?.length)) {
-        return pendingRoles;
-      }
-
-      if (contextSrv.hasPermission(AccessControlAction.ActionUserRolesList) && userId > 0) {
-        return await fetchUserRoles(userId, orgId);
-      }
-    } catch (e) {
-      // TODO handle error
-      console.error('Error loading options');
-    }
-    return [];
-  }, [orgId, userId, pendingRoles, roles]);
+      return [];
+    },
+    [orgId, userId, pendingRoles, roles]
+  );
 
   useEffect(() => {
     // only load roles when there is an Org selected
@@ -83,7 +84,7 @@ export const UserRolePicker = ({
   const onRolesChange = async (roles: Role[]) => {
     if (!apply) {
       await updateUserRoles(roles, userId, orgId);
-      await getUserRoles();
+      await getUserRoles(true); // Force fetch from backend after update
     } else if (onApplyRoles) {
       onApplyRoles(roles, userId, orgId);
     }
@@ -95,6 +96,7 @@ export const UserRolePicker = ({
 
   return (
     <RolePicker
+      pickerId={`user-picker-${userId}-${orgId}`}
       appliedRoles={appliedRoles}
       basicRole={basicRole}
       onRolesChange={onRolesChange}

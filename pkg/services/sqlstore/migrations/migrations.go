@@ -159,5 +159,21 @@ func (oss *OSSMigrations) AddMigration(mg *Migrator) {
 
 	ualert.CollateAlertRuleGroup(mg)
 
+	ualert.ExpandAlertRuleUpdatedByMigration(mg)
+
 	ualert.AddAlertRuleGroupIndexMigration(mg)
+
+	ualert.AddStateAnnotationsColumn(mg)
+
+	ualert.CollateBinAlertRuleNamespace(mg)
+
+	ualert.CollateBinAlertRuleGroup(mg)
+
+	accesscontrol.AddReceiverProtectedFieldsEditor(mg)
+
+	ualert.AddStateEvaluationDurationColumn(mg)
+	ualert.AddStateLastErrorColumn(mg)
+	ualert.AddStateLastResultColumn(mg)
+
+	accesscontrol.AddScopedReceiverTestingPermissions(mg)
 }

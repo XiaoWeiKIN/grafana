@@ -14,7 +14,13 @@ type DashboardLibraryTrackingInfo = {
 export const DashboardInteractions = {
   // Dashboard interactions:
   dashboardInitialized: (
-    properties: { theme: undefined; duration: number | undefined; isScene: boolean } & Partial<DashboardTrackingInfo> &
+    properties: {
+      theme: undefined;
+      duration: number | undefined;
+      isScene: boolean;
+      hasEditPermissions?: boolean;
+      hasSavePermissions?: boolean;
+    } & Partial<DashboardTrackingInfo> &
       Partial<DynamicDashboardsTrackingInformation> &
       Partial<{ version_before_migration: number | undefined }>
   ) => {
@@ -28,11 +34,19 @@ export const DashboardInteractions = {
   dashboardCreatedOrSaved: (
     isNew: boolean | undefined,
     properties:
-      | ({ name: string; url: string } & DashboardLibraryTrackingInfo)
+      | ({
+          name: string;
+          url: string;
+          uid: string;
+          numPanels: number;
+          numRows: number;
+        } & DashboardLibraryTrackingInfo)
       | ({
           name: string;
           url: string;
           numPanels: number;
+          numTabs: number;
+          numRows: number;
           uid: string;
           conditionalRenderRules: number;
           autoLayoutCount: number;
@@ -73,11 +87,23 @@ export const DashboardInteractions = {
     reportDashboardInteraction('add_variable_button_clicked', properties);
   },
 
+  panelActionClicked(
+    item: 'configure' | 'configure_dropdown' | 'edit' | 'copy' | 'duplicate' | 'delete' | 'view',
+    id: number,
+    source: 'panel' | 'edit_pane'
+  ) {
+    reportDashboardInteraction('panel_action_clicked', { item, id, source });
+  },
+
   // Dashboard edit item actions
   // dashboards_edit_action_clicked: when user adds or removes an item in edit mode
   // props: { item: string } - item is one of: add_panel, group_row, group_tab, ungroup, paste_panel, remove_row, remove_tab
-  trackAddPanelClick() {
-    reportDashboardInteraction('edit_action_clicked', { item: 'add_panel' });
+  trackAddPanelClick(
+    source?: 'sidebar' | 'canvas',
+    target?: 'row' | 'tab' | 'dashboard',
+    action: 'drop' | 'click' = 'click'
+  ) {
+    reportDashboardInteraction('edit_action_clicked', { item: 'add_panel', source, target, action });
   },
   trackGroupRowClick() {
     reportDashboardInteraction('edit_action_clicked', { item: 'group_row' });

@@ -23,6 +23,7 @@ import (
 	"github.com/grafana/dskit/services"
 	grafanarest "github.com/grafana/grafana/pkg/apiserver/rest"
 	infraDB "github.com/grafana/grafana/pkg/infra/db"
+	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/infra/tracing"
 	secrets "github.com/grafana/grafana/pkg/registry/apis/secret/contracts"
 	"github.com/grafana/grafana/pkg/services/apiserver/options"
@@ -57,7 +58,6 @@ func ProvideUnifiedStorageClient(opts *Options,
 	storageMetrics *resource.StorageMetrics,
 	indexMetrics *resource.BleveIndexMetrics,
 ) (resource.ResourceClient, error) {
-	// See: apiserver.applyAPIServerConfig(cfg, features, o)
 	apiserverCfg := opts.Cfg.SectionWithEnvOverrides("grafana-apiserver")
 	client, err := newClient(options.StorageOptions{
 		StorageType:             options.StorageType(apiserverCfg.Key("storage_type").MustString(string(options.StorageTypeUnified))),
@@ -122,6 +122,7 @@ func newClient(opts options.StorageOptions,
 		kv := resource.NewBadgerKV(db)
 		backend, err := resource.NewKVStorageBackend(resource.KVBackendOptions{
 			KvStore: kv,
+			Log:     log.New(),
 		})
 		if err != nil {
 			return nil, err
@@ -165,15 +166,11 @@ func newClient(opts options.StorageOptions,
 			indexConn = conn
 		}
 
-		// Create a client instance
-		client, err := resource.NewResourceClient(conn, indexConn, cfg, features, tracer)
-		if err != nil {
-			return nil, err
-		}
-		return client, nil
+		// Create a resource client
+		return resource.NewResourceClient(conn, indexConn, cfg, features, tracer)
 
 	default:
-		searchOptions, err := search.NewSearchOptions(features, cfg, tracer, docs, indexMetrics, nil)
+		searchOptions, err := search.NewSearchOptions(features, cfg, docs, indexMetrics, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -214,6 +211,19 @@ func newClient(opts options.StorageOptions,
 				return nil, fmt.Errorf("failed to start scheduler: %w", err)
 			}
 			serverOptions.QOSQueue = queue
+		}
+
+		// only enable if an overrides file path is provided
+		if cfg.OverridesFilePath != "" {
+			overridesSvc, err := resource.NewOverridesService(ctx, cfg.Logger, reg, tracer, resource.ReloadOptions{
+				FilePath:     cfg.OverridesFilePath,
+				ReloadPeriod: cfg.OverridesReloadInterval,
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			serverOptions.OverridesService = overridesSvc
 		}
 
 		server, err := sql.NewResourceServer(serverOptions)
@@ -263,7 +273,7 @@ func grpcConn(address string, metrics *clientMetrics, clientKeepaliveTime time.D
 	retryCfg := retryConfig{
 		Max:           3,
 		Backoff:       time.Second,
-		BackoffJitter: 0.5,
+		BackoffJitter: 0.1,
 	}
 	unary = append(unary, unaryRetryInterceptor(retryCfg))
 	unary = append(unary, unaryRetryInstrument(metrics.requestRetries))
@@ -280,12 +290,14 @@ func grpcConn(address string, metrics *clientMetrics, clientKeepaliveTime time.D
 	opts = append(opts, grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 
-	// Use round_robin to balances requests more evenly over the available Storage server.
+	// Use round_robin to balance requests more evenly over the available Storage server.
 	opts = append(opts, grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"round_robin"}`))
 
 	// Disable looking up service config from TXT DNS records.
 	// This reduces the number of requests made to the DNS servers.
 	opts = append(opts, grpc.WithDisableServiceConfig())
+
+	opts = append(opts, connectionBackoffOptions())
 
 	if clientKeepaliveTime > 0 {
 		opts = append(opts, grpc.WithKeepaliveParams(keepalive.ClientParameters{

@@ -22,6 +22,7 @@ import (
 	fswebassets "github.com/grafana/grafana/pkg/services/frontend/webassets"
 	"github.com/grafana/grafana/pkg/services/hooks"
 	"github.com/grafana/grafana/pkg/services/licensing"
+	publicdashboardsapi "github.com/grafana/grafana/pkg/services/publicdashboards/api"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/web"
 )
@@ -133,11 +134,13 @@ func (s *frontendService) addMiddlewares(m *web.Mux) {
 	loggermiddleware := loggermw.Provide(s.cfg, s.features)
 
 	m.Use(requestmeta.SetupRequestMetadata())
-	m.Use(middleware.RequestTracing(s.tracer, middleware.TraceAllPaths))
+	m.Use(middleware.RequestTracing(s.tracer, middleware.ShouldTraceAllPaths))
 	m.Use(middleware.RequestMetrics(s.features, s.cfg, s.promRegister))
 
 	m.UseMiddleware(s.contextMiddleware())
 	m.UseMiddleware(loggermiddleware.Middleware())
+
+	m.UseMiddleware(CSPMiddleware(s.cfg))
 
 	m.UseMiddleware(middleware.Recovery(s.cfg, s.license))
 }
@@ -163,6 +166,11 @@ func (s *frontendService) registerRoutes(m *web.Mux) {
 	// GET because all POST requests are passed to the backend, even though POST is more correct. The frontend
 	// uses cache busting to ensure requests aren't cached.
 	s.routeGet(m, "/-/fe-boot-error", s.handleBootError)
+
+	s.routeGet(m, "/public-dashboards/:accessToken",
+		publicdashboardsapi.SetPublicDashboardAccessToken,
+		s.index.HandleRequest,
+	)
 
 	// All other requests return index.html
 	s.routeGet(m, "/*", s.index.HandleRequest)

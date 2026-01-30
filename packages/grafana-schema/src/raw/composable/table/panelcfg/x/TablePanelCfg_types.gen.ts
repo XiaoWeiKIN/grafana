@@ -8,6 +8,8 @@
 //
 // Run 'make gen-cue' from repository root to regenerate.
 
+// Generated from public/app/plugins/panel/table/panelcfg.cue file.
+
 import * as ui from '@grafana/schema';
 
 export const pluginVersion = "12.4.0-pre";
@@ -17,6 +19,10 @@ export interface Options {
    * Controls the height of the rows
    */
   cellHeight?: ui.TableCellHeight;
+  /**
+   * If true, disables all keyboard events in the table. this is used when previewing a table (i.e. suggestions)
+   */
+  disableKeyboardEvents?: boolean;
   /**
    * Enable pagination on the table
    */

@@ -3,7 +3,7 @@ import { Path } from 'react-hook-form';
 import { ErrorDetails } from 'app/api/clients/provisioning/v0alpha1';
 
 import { WizardFormData } from '../Wizard/types';
-import { RepositoryFormData } from '../types';
+import { ConnectionFormData, RepositoryFormData } from '../types';
 
 export type RepositoryField = keyof WizardFormData['repository'];
 export type RepositoryFormPath = `repository.${RepositoryField}` | 'repository.sync.intervalSeconds';
@@ -85,6 +85,27 @@ export const getConfigFormErrors = (errors?: ErrorDetails[]): ConfigFormErrorTup
     token: 'token',
     tokenUser: 'tokenUser',
     'sync.intervalSeconds': 'sync.intervalSeconds',
+  };
+
+  return mapErrorsToField(errors, fieldMap, { allowPartial: true });
+};
+
+// Connection form errors
+export type ConnectionFormPath = Path<ConnectionFormData>;
+export type ConnectionFormErrorTuple = GenericFormErrorTuple<ConnectionFormPath>;
+
+export const getConnectionFormErrors = (errors?: ErrorDetails[]): ConnectionFormErrorTuple => {
+  const fieldMap: Record<string, ConnectionFormPath> = {
+    // eslint-disable-next-line @grafana/i18n/no-untranslated-strings
+    title: 'title',
+    // eslint-disable-next-line @grafana/i18n/no-untranslated-strings
+    description: 'description',
+    appID: 'appID',
+    installationID: 'installationID',
+    'github.appID': 'appID',
+    'github.installationID': 'installationID',
+    'secure.privateKey': 'privateKey',
+    privateKey: 'privateKey',
   };
 
   return mapErrorsToField(errors, fieldMap, { allowPartial: true });

@@ -11,7 +11,6 @@ import (
 
 	"github.com/grafana/grafana-app-sdk/logging"
 	"github.com/grafana/grafana/pkg/api/dtos"
-	"github.com/grafana/grafana/pkg/middleware"
 	"github.com/grafana/grafana/pkg/services/contexthandler"
 	contextmodel "github.com/grafana/grafana/pkg/services/contexthandler/model"
 	"github.com/grafana/grafana/pkg/services/hooks"
@@ -45,6 +44,8 @@ type IndexViewData struct {
 
 	// Nonce is a cryptographic identifier for use with Content Security Policy.
 	Nonce string
+
+	PublicDashboardAccessToken string
 }
 
 // Templates setup.
@@ -67,34 +68,36 @@ func NewIndexProvider(cfg *setting.Cfg, assetsManifest dtos.EntryPointAssets, li
 	// subset of frontend settings needed for the login page
 	// TODO what about enterprise settings here?
 	frontendSettings := FSFrontendSettings{
-		AnalyticsConsoleReporting:           cfg.FrontendAnalyticsConsoleReporting,
-		AnonymousEnabled:                    cfg.Anonymous.Enabled,
-		ApplicationInsightsConnectionString: cfg.ApplicationInsightsConnectionString,
-		ApplicationInsightsEndpointUrl:      cfg.ApplicationInsightsEndpointUrl,
-		AuthProxyEnabled:                    cfg.AuthProxy.Enabled,
-		AutoAssignOrg:                       cfg.AutoAssignOrg,
-		CSPReportOnlyEnabled:                cfg.CSPReportOnlyEnabled,
-		DisableLoginForm:                    cfg.DisableLoginForm,
-		DisableUserSignUp:                   !cfg.AllowUserSignUp,
-		GoogleAnalytics4Id:                  cfg.GoogleAnalytics4ID,
-		GoogleAnalytics4SendManualPageViews: cfg.GoogleAnalytics4SendManualPageViews,
-		GoogleAnalyticsId:                   cfg.GoogleAnalyticsID,
-		GrafanaJavascriptAgent:              cfg.GrafanaJavascriptAgent,
-		Http2Enabled:                        cfg.Protocol == setting.HTTP2Scheme,
-		JwtHeaderName:                       cfg.JWTAuth.HeaderName,
-		JwtUrlLogin:                         cfg.JWTAuth.URLLogin,
-		LdapEnabled:                         cfg.LDAPAuthEnabled,
-		LoginHint:                           cfg.LoginHint,
-		PasswordHint:                        cfg.PasswordHint,
-		ReportingStaticContext:              cfg.ReportingStaticContext,
-		RudderstackConfigUrl:                cfg.RudderstackConfigURL,
-		RudderstackDataPlaneUrl:             cfg.RudderstackDataPlaneURL,
-		RudderstackIntegrationsUrl:          cfg.RudderstackIntegrationsURL,
-		RudderstackSdkUrl:                   cfg.RudderstackSDKURL,
-		RudderstackWriteKey:                 cfg.RudderstackWriteKey,
-		TrustedTypesDefaultPolicyEnabled:    (cfg.CSPEnabled && strings.Contains(cfg.CSPTemplate, "require-trusted-types-for")) || (cfg.CSPReportOnlyEnabled && strings.Contains(cfg.CSPReportOnlyTemplate, "require-trusted-types-for")),
-		VerifyEmailEnabled:                  cfg.VerifyEmailEnabled,
-		BuildInfo:                           getBuildInfo(license, cfg),
+		AnalyticsConsoleReporting:            cfg.FrontendAnalyticsConsoleReporting,
+		AnonymousEnabled:                     cfg.Anonymous.Enabled,
+		ApplicationInsightsConnectionString:  cfg.ApplicationInsightsConnectionString,
+		ApplicationInsightsEndpointUrl:       cfg.ApplicationInsightsEndpointUrl,
+		ApplicationInsightsAutoRouteTracking: cfg.ApplicationInsightsAutoRouteTracking,
+		AuthProxyEnabled:                     cfg.AuthProxy.Enabled,
+		AutoAssignOrg:                        cfg.AutoAssignOrg,
+		CSPReportOnlyEnabled:                 cfg.CSPReportOnlyEnabled,
+		DisableLoginForm:                     cfg.DisableLoginForm,
+		DisableUserSignUp:                    !cfg.AllowUserSignUp,
+		GoogleAnalytics4Id:                   cfg.GoogleAnalytics4ID,
+		GoogleAnalytics4SendManualPageViews:  cfg.GoogleAnalytics4SendManualPageViews,
+		GoogleAnalyticsId:                    cfg.GoogleAnalyticsID,
+		GrafanaJavascriptAgent:               cfg.GrafanaJavascriptAgent,
+		Http2Enabled:                         cfg.Protocol == setting.HTTP2Scheme,
+		JwtHeaderName:                        cfg.JWTAuth.HeaderName,
+		JwtUrlLogin:                          cfg.JWTAuth.URLLogin,
+		LdapEnabled:                          cfg.LDAPAuthEnabled,
+		LoginHint:                            cfg.LoginHint,
+		PasswordHint:                         cfg.PasswordHint,
+		ReportingStaticContext:               cfg.ReportingStaticContext,
+		RudderstackConfigUrl:                 cfg.RudderstackConfigURL,
+		RudderstackDataPlaneUrl:              cfg.RudderstackDataPlaneURL,
+		RudderstackIntegrationsUrl:           cfg.RudderstackIntegrationsURL,
+		RudderstackSdkUrl:                    cfg.RudderstackSDKURL,
+		RudderstackV3SdkUrl:                  cfg.RudderstackV3SDKURL,
+		RudderstackWriteKey:                  cfg.RudderstackWriteKey,
+		TrustedTypesDefaultPolicyEnabled:     (cfg.CSPEnabled && strings.Contains(cfg.CSPTemplate, "require-trusted-types-for")) || (cfg.CSPReportOnlyEnabled && strings.Contains(cfg.CSPReportOnlyTemplate, "require-trusted-types-for")),
+		VerifyEmailEnabled:                   cfg.VerifyEmailEnabled,
+		BuildInfo:                            getBuildInfo(license, cfg),
 	}
 
 	return &IndexProvider{
@@ -130,26 +133,38 @@ func (p *IndexProvider) HandleRequest(writer http.ResponseWriter, request *http.
 		return
 	}
 
-	nonce, err := middleware.GenerateNonce()
-	if err != nil {
-		p.log.Error("error creating nonce", "err", err)
-		writer.WriteHeader(500)
-		return
-	}
+	reqCtx := contexthandler.FromContext(ctx)
 
 	// TODO -- restructure so the static stuff is under one variable and the rest is dynamic
 	data := p.data // copy everything
-	data.Nonce = nonce
+	// Use nonce generated by CSP middleware
+	data.Nonce = reqCtx.RequestNonce
+	data.PublicDashboardAccessToken = reqCtx.PublicDashboardAccessToken
 
-	if data.CSPEnabled {
-		data.CSPContent = middleware.ReplacePolicyVariables(p.data.CSPContent, p.data.AppSubUrl, data.Nonce)
-		writer.Header().Set("Content-Security-Policy", data.CSPContent)
+	// TODO -- reevaluate with mt authnz
+	// Check for login_error cookie and set a generic error message.
+	// The backend sets an encrypted cookie on oauth login failures that we can't read
+	// so we just show a generic error if the cookie is present.
+	if cookie, err := request.Cookie("login_error"); err == nil && cookie.Value != "" {
+		p.log.Info("request has login_error cookie")
+		// Defaults to a translation key that the frontend will resolve to a localized message
+		data.Settings.LoginError = p.data.Config.OAuthLoginErrorMessage
 
-		policy := middleware.ReplacePolicyVariables(p.data.CSPReportOnlyContent, p.data.AppSubUrl, data.Nonce)
-		writer.Header().Set("Content-Security-Policy-Report-Only", policy)
+		cookiePath := "/"
+		if p.data.AppSubUrl != "" {
+			cookiePath = p.data.AppSubUrl
+		}
+		http.SetCookie(writer, &http.Cookie{
+			Name:     "login_error",
+			Value:    "",
+			Path:     cookiePath,
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   p.data.Config.CookieSecure,
+			SameSite: p.data.Config.CookieSameSiteMode,
+		})
 	}
 
-	reqCtx := contexthandler.FromContext(ctx)
 	p.runIndexDataHooks(reqCtx, &data)
 
 	writer.Header().Set("Content-Type", "text/html; charset=UTF-8")

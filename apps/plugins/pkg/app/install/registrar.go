@@ -15,36 +15,36 @@ const (
 	PluginInstallSourceAnnotation = "plugins.grafana.app/install-source"
 )
 
-// Class represents the plugin class type in an unversioned internal format.
-// This intentionally duplicates the versioned API type (PluginInstallSpecClass) to decouple
-// internal code from API version changes, making it easier to support multiple API versions.
-type Class = string
-
-const (
-	ClassCore     Class = "core"
-	ClassExternal Class = "external"
-	ClassCDN      Class = "cdn"
-)
-
 type Source = string
 
 const (
-	SourceUnknown     Source = "unknown"
-	SourcePluginStore Source = "plugin-store"
+	SourceUnknown               Source = "unknown"
+	SourcePluginStore           Source = "plugin-store"
+	SourceChildPluginReconciler Source = "child-plugin-reconciler"
 )
 
+// Registrar is an interface for registering plugin installations.
+type Registrar interface {
+	Register(ctx context.Context, namespace string, install *PluginInstall) error
+	Unregister(ctx context.Context, namespace string, name string, source Source) error
+}
+
 type PluginInstall struct {
-	ID      string
-	Version string
-	URL     string
-	Class   Class
-	Source  Source
+	ID       string
+	Version  string
+	URL      string
+	Source   Source
+	ParentID string
 }
 
 func (p *PluginInstall) ToPluginInstallV0Alpha1(namespace string) *pluginsv0alpha1.Plugin {
 	var url *string = nil
 	if p.URL != "" {
 		url = &p.URL
+	}
+	var parentID *string = nil
+	if p.ParentID != "" {
+		parentID = &p.ParentID
 	}
 	return &pluginsv0alpha1.Plugin{
 		ObjectMeta: metav1.ObjectMeta{
@@ -55,10 +55,10 @@ func (p *PluginInstall) ToPluginInstallV0Alpha1(namespace string) *pluginsv0alph
 			},
 		},
 		Spec: pluginsv0alpha1.PluginSpec{
-			Id:      p.ID,
-			Version: p.Version,
-			Url:     url,
-			Class:   pluginsv0alpha1.PluginSpecClass(p.Class),
+			Id:       p.ID,
+			Version:  p.Version,
+			Url:      url,
+			ParentId: parentID,
 		},
 	}
 }
@@ -71,10 +71,10 @@ func (p *PluginInstall) ShouldUpdate(existing *pluginsv0alpha1.Plugin) bool {
 	if existing.Spec.Version != update.Spec.Version {
 		return true
 	}
-	if existing.Spec.Class != update.Spec.Class {
-		return true // this should never really happen
-	}
 	if !equalStringPointers(existing.Spec.Url, update.Spec.Url) {
+		return true
+	}
+	if !equalStringPointers(existing.Spec.ParentId, update.Spec.ParentId) {
 		return true
 	}
 	return false

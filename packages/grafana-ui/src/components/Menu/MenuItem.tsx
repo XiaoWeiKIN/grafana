@@ -177,7 +177,7 @@ export const MenuItem = React.memo(
       >
         <Stack direction="row" justifyContent="flex-start" alignItems="center">
           {icon && <Icon name={icon} className={styles.icon} aria-hidden />}
-          <span className={styles.ellipsis}>{label}</span>
+          <span className={cx(styles.ellipsis, styles.label)}>{label}</span>
           <div className={cx(styles.rightWrapper, { [styles.withShortcut]: hasShortcut })}>
             {hasShortcut && (
               <div className={styles.shortcut}>
@@ -187,6 +187,7 @@ export const MenuItem = React.memo(
             )}
             {hasSubMenu && (
               <SubMenu
+                parentItemRef={localRef}
                 items={childItems}
                 isOpen={isSubMenuOpen}
                 close={closeSubMenu}
@@ -220,7 +221,7 @@ const getStyles = (theme: GrafanaTheme2) => {
       background: 'none',
       cursor: 'pointer',
       whiteSpace: 'nowrap',
-      color: theme.colors.text.primary,
+      color: theme.colors.text.secondary,
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'stretch',
@@ -240,6 +241,9 @@ const getStyles = (theme: GrafanaTheme2) => {
       },
 
       '&:focus-visible': getFocusStyles(theme),
+    }),
+    label: css({
+      color: theme.colors.text.primary,
     }),
     active: css({
       background: theme.colors.action.hover,
@@ -271,7 +275,6 @@ const getStyles = (theme: GrafanaTheme2) => {
     }),
     icon: css({
       opacity: 0.7,
-      color: theme.colors.text.secondary,
     }),
     rightWrapper: css({
       display: 'flex',
@@ -286,11 +289,9 @@ const getStyles = (theme: GrafanaTheme2) => {
       alignItems: 'center',
       gap: theme.spacing(1),
       marginLeft: theme.spacing(2),
-      color: theme.colors.text.secondary,
     }),
     description: css({
       ...theme.typography.bodySmall,
-      color: theme.colors.text.secondary,
       textAlign: 'start',
     }),
     descriptionWithIcon: css({
