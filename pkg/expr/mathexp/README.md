@@ -103,6 +103,254 @@ mathexp/
 └── testing.go        # 测试工具
 ```
 
+## parse 子包详解
+
+`parse` 子包负责将字符串形式的数学表达式解析为抽象语法树(AST),是整个表达式引擎的基础。该包改编自 Go 语言标准库的 text/template 包。
+
+### 架构组成
+
+parse 包由三个主要组件构成:
+
+#### 1. 词法分析器 (lex.go)
+
+词法分析器将输入字符串分解为词法单元(token)。
+
+**支持的 Token 类型**:
+```go
+- itemNumber      // 数字: 整数、浮点数、科学计数法、十六进制
+- itemVar         // 变量: $A, $B, ${var_name}
+- itemFunc        // 函数名: abs, log, sum 等
+- itemString      // 字符串: "quoted string"
+- 运算符:
+  - itemPlus      // +
+  - itemMinus     // -
+  - itemMult      // *
+  - itemDiv       // /
+  - itemMod       // %
+  - itemPow       // **
+- 比较运算符:
+  - itemEq        // ==
+  - itemNotEq     // !=
+  - itemGreater   // >
+  - itemLess      // <
+  - itemGreaterEq // >=
+  - itemLessEq    // <=
+- 逻辑运算符:
+  - itemAnd       // &&
+  - itemOr        // ||
+  - itemNot       // !
+- 分隔符:
+  - itemLeftParen, itemRightParen  // ( )
+  - itemComma     // ,
+```
+
+**工作原理**:
+- 使用**状态机模式**进行词法分析
+- 通过 goroutine 和 channel 实现流式处理
+- 支持变量的两种语法: `$A` 和 `${var_name}`
+- 自动忽略空白字符
+
+**状态函数**:
+- `lexItem`: 主状态,识别token类型并分派到相应状态
+- `lexNumber`: 解析数字(支持十进制、十六进制、科学计数法)
+- `lexFunc`: 解析函数名(字母和下划线)
+- `lexVar`: 解析变量(支持 $ 前缀和 {} 包裹)
+- `lexString`: 解析双引号字符串
+- `lexSymbol`: 解析运算符和符号
+
+#### 2. 语法解析器 (parse.go)
+
+语法解析器将词法单元流转换为抽象语法树。
+
+**文法定义** (基于运算符优先级递归下降):
+```
+O -> A {"||" A}                                          // 逻辑或 (最低优先级)
+A -> C {"&&" C}                                          // 逻辑与
+C -> P {("==" | "!=" | ">" | ">=" | "<" | "<=") P}      // 比较运算
+P -> M {("+" | "-") M}                                   // 加减法
+M -> E {("*" | "/" | "%") E}                             // 乘除模
+E -> F {"**" F}                                          // 幂运算 (最高优先级)
+F -> v | "(" O ")" | "!" F | "-" F                       // 因子 (一元运算、括号)
+v -> number | func(...) | $var                           // 值
+```
+
+**解析方法**:
+- `O()`: 解析逻辑或表达式
+- `A()`: 解析逻辑与表达式
+- `C()`: 解析比较表达式
+- `P()`: 解析加减表达式
+- `M()`: 解析乘除模表达式
+- `E()`: 解析幂运算表达式
+- `F()`: 解析因子(一元运算、括号、基本值)
+- `v()`: 解析值(数字、函数、变量)
+
+**核心特性**:
+- **Lookahead机制**: 使用单 token 前瞻判断解析路径
+- **类型检查**: 解析时进行类型检查,确保函数参数类型正确
+- **错误恢复**: 使用 panic/recover 机制处理解析错误
+- **函数验证**: 检查函数参数数量和类型匹配
+
+#### 3. AST 节点 (node.go)
+
+定义了构成抽象语法树的各种节点类型。
+
+**节点接口**:
+```go
+type Node interface {
+    Type() NodeType              // 节点类型
+    String() string              // 字符串表示
+    StringAST() string           // AST格式表示
+    Position() Pos               // 源码位置
+    Check(*Tree) error           // 类型检查
+    Return() ReturnType          // 返回类型
+}
+```
+
+**节点类型**:
+
+1. **VarNode (变量节点)**
+   - 表示查询变量引用 (如 `$A`, `$B`)
+   - 存储变量名(去除 $ 和 {})
+   - 返回类型: `TypeSeriesSet`
+
+2. **ScalarNode (标量节点)**
+   - 表示数字常量
+   - 支持整数和浮点数
+   - 解析时同时尝试 uint64 和 float64
+   - 返回类型: `TypeScalar`
+
+3. **StringNode (字符串节点)**
+   - 表示字符串常量
+   - 存储原始带引号文本和解析后文本
+   - 返回类型: `TypeString`
+
+4. **FuncNode (函数节点)**
+   - 表示函数调用
+   - 包含函数名、参数列表、函数定义
+   - 执行类型检查:
+     - 参数数量验证
+     - 参数类型匹配
+     - 支持变参类型(`TypeVariantSet`)
+   - 支持动态返回类型(`VariantReturn`)
+
+5. **BinaryNode (二元运算节点)**
+   - 表示二元运算 (如 `A + B`, `A > B`)
+   - 存储两个操作数和运算符
+   - 返回类型: 两个操作数中优先级较高的类型
+   - 格式化: 中缀表示法 `A op B`
+
+6. **UnaryNode (一元运算节点)**
+   - 表示一元运算 (如 `-A`, `!B`)
+   - 存储操作数和运算符
+   - 类型检查: 仅支持数值类型
+   - 返回类型: 与操作数相同
+
+**返回类型系统**:
+```go
+TypeString      // 字符串
+TypeScalar      // 无标签标量
+TypeNumberSet   // 带标签数值集合
+TypeSeriesSet   // 带标签时间序列集合
+TypeVariantSet  // 可变类型(Number/Series/Scalar之一)
+TypeNoData      // 无数据
+TypeTableData   // 表格数据
+```
+
+### 解析流程示例
+
+对于表达式 `$A + $B * 2`:
+
+1. **词法分析**:
+   ```
+   $A      -> itemVar("A")
+   +       -> itemPlus
+   $B      -> itemVar("B")
+   *       -> itemMult
+   2       -> itemNumber(2)
+   ```
+
+2. **语法解析** (根据优先级):
+   ```
+   P() 进入
+   ├── M() -> Var("A")
+   ├── itemPlus
+   └── M() 进入
+       ├── E() -> Var("B")
+       ├── itemMult
+       └── E() -> Scalar(2)
+       返回 BinaryNode(*, B, 2)
+   返回 BinaryNode(+, A, BinaryNode(*, B, 2))
+   ```
+
+3. **AST结构**:
+   ```
+   BinaryNode(+)
+   ├── VarNode("A")
+   └── BinaryNode(*)
+       ├── VarNode("B")
+       └── ScalarNode(2.0)
+   ```
+
+### 类型检查
+
+解析器在构建 AST 时进行类型检查:
+
+```go
+// 函数类型检查示例
+abs($A)  // ✓ TypeVariantSet 接受 Series
+sum(5)   // ✗ sum 期望 SeriesSet,得到 Scalar
+$A + "text"  // ✗ 不能对字符串进行算术运算
+```
+
+**检查规则**:
+- 函数参数数量必须匹配
+- 参数类型必须兼容
+- `TypeVariantSet` 可接受 Number/Series/Scalar
+- 一元运算仅支持数值类型
+- 递归检查所有子节点
+
+### 错误处理
+
+**错误类型**:
+1. **词法错误**: 非法字符、未闭合字符串、不完整变量
+2. **语法错误**: 意外的 token、括号不匹配
+3. **类型错误**: 参数类型不匹配、参数数量错误
+4. **函数错误**: 未定义的函数
+
+**错误报告**:
+- 包含错误位置(字节偏移)
+- 提供上下文信息
+- 使用 panic/recover 终止解析
+
+### 工具函数
+
+**Walk**: 遍历 AST 树
+```go
+func Walk(n Node, f func(Node))
+```
+
+用途:
+- 收集变量名
+- 类型推断
+- 代码生成
+- 优化转换
+
+### 扩展性设计
+
+parse 包设计为可扩展:
+
+1. **自定义函数**: 通过 `map[string]Func` 传入
+2. **自定义类型检查**: `Func.Check` 回调
+3. **变参返回**: `VariantReturn` 支持动态类型
+4. **AST 转换**: 提供 `Walk` 遍历机制
+
+### 性能特性
+
+1. **流式处理**: lexer 使用 goroutine + channel
+2. **单遍解析**: 一次遍历完成词法和语法分析
+3. **零拷贝**: Token 通过 channel 传递
+4. **懒惰求值**: 使用前瞻避免回溯
+
 ## 使用示例
 
 ### 创建和执行表达式
