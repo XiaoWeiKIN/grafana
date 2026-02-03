@@ -50,6 +50,9 @@ go 1.21
 
 require (
     github.com/grafana/grafana-plugin-sdk-go v0.199.0
+    gorm.io/gorm v1.25.7
+    gorm.io/driver/mysql v1.5.4    // MySQL
+    gorm.io/driver/postgres v1.5.6 // PostgreSQL
 )
 ```
 
@@ -67,7 +70,7 @@ require (
 ```
 pkg/
 ├── plugins/
-│   ├── errors.go                    # 错误定义
+│   ├── errors.go                    # 插件错误定义
 │   ├── backendplugin/
 │   │   ├── ifaces.go                # 插件接口定义
 │   │   └── coreplugin/
@@ -82,12 +85,16 @@ pkg/
 │           └── client.go            # 插件客户端
 │
 ├── services/
+│   ├── datasources/                 # 数据源服务
+│   │   ├── errors.go                # 错误定义
+│   │   ├── models.go                # 数据模型和 DTO
+│   │   ├── service.go               # 服务接口
+│   │   └── service/
+│   │       ├── datasource_service.go    # GORM 实现
+│   │       └── cache.go                 # 缓存实现
+│   │
 │   └── plugincontext/
 │       └── provider.go              # 插件上下文提供者
-│
-├── datasource/
-│   ├── model.go                     # 数据源模型
-│   └── store.go                     # 数据源存储
 │
 └── query/
     └── service.go                   # 查询服务
@@ -564,104 +571,522 @@ func (s *Service) plugin(ctx context.Context, pluginID string) (backendplugin.Pl
 
 ---
 
-### 4.7 数据源模型 (pkg/datasource/model.go)
+### 4.7 数据源服务 (pkg/services/datasources)
+
+参考 Grafana `pkg/services/datasources`，简化实现，使用 GORM v2。
+
+#### 4.7.1 错误定义 (pkg/services/datasources/errors.go)
 
 ```go
-package datasource
+package datasources
+
+import "errors"
+
+var (
+    ErrDataSourceNotFound      = errors.New("data source not found")
+    ErrDataSourceUIDExists     = errors.New("data source with the same uid already exists")
+    ErrDataSourceNameExists    = errors.New("data source with the same name already exists")
+    ErrDataSourceAccessDenied  = errors.New("data source access denied")
+    ErrDataSourceInvalidType   = errors.New("invalid data source type")
+)
+```
+
+#### 4.7.2 数据源模型 (pkg/services/datasources/models.go)
+
+```go
+package datasources
 
 import (
     "encoding/json"
     "time"
 )
 
-// DataSource 表示一个数据源配置
+// 数据源访问模式
+type DsAccess string
+
+const (
+    DS_ACCESS_DIRECT DsAccess = "direct"  // 浏览器直连
+    DS_ACCESS_PROXY  DsAccess = "proxy"   // 通过后端代理
+)
+
+// DataSource 数据源模型（GORM 表结构）
 type DataSource struct {
-    ID             int64             `json:"id"`
-    UID            string            `json:"uid"`
-    Name           string            `json:"name"`
-    Type           string            `json:"type"`  // 对应 pluginID
-    URL            string            `json:"url"`
-    Database       string            `json:"database"`
-    User           string            `json:"user"`
-    JSONData       json.RawMessage   `json:"jsonData"`
-    SecureJSONData map[string][]byte `json:"-"`  // 加密存储，不序列化
-    Created        time.Time         `json:"created"`
-    Updated        time.Time         `json:"updated"`
+    ID      int64  `json:"id" gorm:"primaryKey;autoIncrement"`
+    OrgID   int64  `json:"orgId" gorm:"column:org_id;index"`
+    Version int    `json:"version"`
+
+    Name           string          `json:"name" gorm:"uniqueIndex:idx_datasource_org_name"`
+    Type           string          `json:"type"`  // 对应 pluginID
+    Access         DsAccess        `json:"access"`
+    URL            string          `json:"url"`
+    User           string          `json:"user"`
+    Database       string          `json:"database"`
+    BasicAuth      bool            `json:"basicAuth"`
+    BasicAuthUser  string          `json:"basicAuthUser"`
+    IsDefault      bool            `json:"isDefault"`
+    ReadOnly       bool            `json:"readOnly"`
+    UID            string          `json:"uid" gorm:"uniqueIndex:idx_datasource_org_uid"`
+    JSONData       json.RawMessage `json:"jsonData" gorm:"type:text"`
+    SecureJSONData map[string][]byte `json:"-" gorm:"type:text;serializer:json"`
+
+    Created time.Time `json:"created" gorm:"autoCreateTime"`
+    Updated time.Time `json:"updated" gorm:"autoUpdateTime"`
 }
+
+// TableName GORM 表名
+func (DataSource) TableName() string {
+    return "data_source"
+}
+
+// --- 查询参数 ---
+
+// GetDataSourceQuery 获取单个数据源的查询参数
+type GetDataSourceQuery struct {
+    ID    int64
+    UID   string
+    Name  string
+    OrgID int64  // 必填
+}
+
+// GetDataSourcesByTypeQuery 按类型获取数据源的查询参数
+type GetDataSourcesByTypeQuery struct {
+    OrgID int64   // 可选，0 表示所有组织
+    Type  string  // 必填
+}
+
+// --- 命令参数 ---
+
+// AddDataSourceCommand 添加数据源命令
+type AddDataSourceCommand struct {
+    Name           string            `json:"name" binding:"required"`
+    Type           string            `json:"type" binding:"required"`
+    Access         DsAccess          `json:"access" binding:"required"`
+    URL            string            `json:"url"`
+    User           string            `json:"user"`
+    Database       string            `json:"database"`
+    BasicAuth      bool              `json:"basicAuth"`
+    BasicAuthUser  string            `json:"basicAuthUser"`
+    IsDefault      bool              `json:"isDefault"`
+    JSONData       json.RawMessage   `json:"jsonData"`
+    SecureJSONData map[string]string `json:"secureJsonData"`  // 明文，需加密
+    UID            string            `json:"uid"`
+
+    OrgID int64 `json:"-"`  // 从上下文获取
+}
+
+// UpdateDataSourceCommand 更新数据源命令
+type UpdateDataSourceCommand struct {
+    Name           string            `json:"name" binding:"required"`
+    Type           string            `json:"type" binding:"required"`
+    Access         DsAccess          `json:"access" binding:"required"`
+    URL            string            `json:"url"`
+    User           string            `json:"user"`
+    Database       string            `json:"database"`
+    BasicAuth      bool              `json:"basicAuth"`
+    BasicAuthUser  string            `json:"basicAuthUser"`
+    IsDefault      bool              `json:"isDefault"`
+    JSONData       json.RawMessage   `json:"jsonData"`
+    SecureJSONData map[string]string `json:"secureJsonData"`
+    UID            string            `json:"uid"`
+    Version        int               `json:"version"`  // 乐观锁
+
+    OrgID int64 `json:"-"`
+    ID    int64 `json:"-"`
+}
+
+// DeleteDataSourceCommand 删除数据源命令
+type DeleteDataSourceCommand struct {
+    ID    int64
+    UID   string
+    Name  string
+    OrgID int64
+}
+```
+
+#### 4.7.3 服务接口 (pkg/services/datasources/service.go)
+
+```go
+package datasources
+
+import "context"
+
+// DataSourceService 数据源服务接口（简化版）
+type DataSourceService interface {
+    // GetDataSource 获取单个数据源
+    GetDataSource(ctx context.Context, query *GetDataSourceQuery) (*DataSource, error)
+
+    // GetDataSourcesByType 按类型获取数据源
+    GetDataSourcesByType(ctx context.Context, query *GetDataSourcesByTypeQuery) ([]*DataSource, error)
+
+    // AddDataSource 添加数据源
+    AddDataSource(ctx context.Context, cmd *AddDataSourceCommand) (*DataSource, error)
+
+    // UpdateDataSource 更新数据源
+    UpdateDataSource(ctx context.Context, cmd *UpdateDataSourceCommand) (*DataSource, error)
+
+    // DeleteDataSource 删除数据源
+    DeleteDataSource(ctx context.Context, cmd *DeleteDataSourceCommand) error
+}
+
+// CacheService 数据源缓存接口
+type CacheService interface {
+    GetByID(ctx context.Context, id int64, skipCache bool) (*DataSource, error)
+    GetByUID(ctx context.Context, uid string, skipCache bool) (*DataSource, error)
+    InvalidateCache(uid string)
+}
+```
+
+#### 4.7.4 GORM 实现 (pkg/services/datasources/service/datasource_service.go)
+
+```go
+package service
+
+import (
+    "context"
+    "errors"
+    "time"
+
+    "gorm.io/gorm"
+
+    "your-project/pkg/services/datasources"
+)
+
+// Service 数据源服务实现
+type Service struct {
+    db            *gorm.DB
+    secretService SecretService
+}
+
+// SecretService 加密服务接口
+type SecretService interface {
+    Encrypt(ctx context.Context, data []byte) ([]byte, error)
+    Decrypt(ctx context.Context, data []byte) ([]byte, error)
+}
+
+// NewService 创建数据源服务
+func NewService(db *gorm.DB, secretService SecretService) *Service {
+    return &Service{
+        db:            db,
+        secretService: secretService,
+    }
+}
+
+// GetDataSource 获取单个数据源
+func (s *Service) GetDataSource(ctx context.Context, query *datasources.GetDataSourceQuery) (*datasources.DataSource, error) {
+    if query.OrgID == 0 {
+        return nil, errors.New("orgID is required")
+    }
+
+    var ds datasources.DataSource
+    tx := s.db.WithContext(ctx).Where("org_id = ?", query.OrgID)
+
+    // 按优先级查询：UID > ID > Name
+    if query.UID != "" {
+        tx = tx.Where("uid = ?", query.UID)
+    } else if query.ID != 0 {
+        tx = tx.Where("id = ?", query.ID)
+    } else if query.Name != "" {
+        tx = tx.Where("name = ?", query.Name)
+    } else {
+        return nil, errors.New("UID, ID, or Name is required")
+    }
+
+    if err := tx.First(&ds).Error; err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            return nil, datasources.ErrDataSourceNotFound
+        }
+        return nil, err
+    }
+
+    return &ds, nil
+}
+
+// GetDataSourcesByType 按类型获取数据源
+func (s *Service) GetDataSourcesByType(ctx context.Context, query *datasources.GetDataSourcesByTypeQuery) ([]*datasources.DataSource, error) {
+    if query.Type == "" {
+        return nil, errors.New("type is required")
+    }
+
+    var result []*datasources.DataSource
+    tx := s.db.WithContext(ctx).Where("type = ?", query.Type)
+
+    if query.OrgID != 0 {
+        tx = tx.Where("org_id = ?", query.OrgID)
+    }
+
+    if err := tx.Find(&result).Error; err != nil {
+        return nil, err
+    }
+
+    return result, nil
+}
+
+// AddDataSource 添加数据源
+func (s *Service) AddDataSource(ctx context.Context, cmd *datasources.AddDataSourceCommand) (*datasources.DataSource, error) {
+    if cmd.OrgID == 0 {
+        return nil, errors.New("orgID is required")
+    }
+
+    // 生成 UID（如果未提供）
+    if cmd.UID == "" {
+        cmd.UID = generateUID()
+    }
+
+    // 检查唯一性
+    if err := s.checkUniqueness(ctx, cmd.OrgID, cmd.UID, cmd.Name, 0); err != nil {
+        return nil, err
+    }
+
+    // 加密敏感数据
+    encryptedData, err := s.encryptSecureData(ctx, cmd.SecureJSONData)
+    if err != nil {
+        return nil, err
+    }
+
+    ds := &datasources.DataSource{
+        OrgID:          cmd.OrgID,
+        Name:           cmd.Name,
+        Type:           cmd.Type,
+        Access:         cmd.Access,
+        URL:            cmd.URL,
+        User:           cmd.User,
+        Database:       cmd.Database,
+        BasicAuth:      cmd.BasicAuth,
+        BasicAuthUser:  cmd.BasicAuthUser,
+        IsDefault:      cmd.IsDefault,
+        UID:            cmd.UID,
+        JSONData:       cmd.JSONData,
+        SecureJSONData: encryptedData,
+        Version:        1,
+    }
+
+    // 如果设置为默认，取消其他默认
+    if cmd.IsDefault {
+        s.db.WithContext(ctx).Model(&datasources.DataSource{}).
+            Where("org_id = ? AND is_default = ?", cmd.OrgID, true).
+            Update("is_default", false)
+    }
+
+    if err := s.db.WithContext(ctx).Create(ds).Error; err != nil {
+        return nil, err
+    }
+
+    return ds, nil
+}
+
+// UpdateDataSource 更新数据源
+func (s *Service) UpdateDataSource(ctx context.Context, cmd *datasources.UpdateDataSourceCommand) (*datasources.DataSource, error) {
+    // 获取现有数据源
+    existing, err := s.GetDataSource(ctx, &datasources.GetDataSourceQuery{
+        ID:    cmd.ID,
+        UID:   cmd.UID,
+        OrgID: cmd.OrgID,
+    })
+    if err != nil {
+        return nil, err
+    }
+
+    // 乐观锁检查
+    if cmd.Version != 0 && cmd.Version != existing.Version {
+        return nil, errors.New("optimistic lock error: version mismatch")
+    }
+
+    // 检查名称唯一性
+    if cmd.Name != existing.Name {
+        if err := s.checkUniqueness(ctx, cmd.OrgID, "", cmd.Name, existing.ID); err != nil {
+            return nil, err
+        }
+    }
+
+    // 加密敏感数据
+    encryptedData, err := s.encryptSecureData(ctx, cmd.SecureJSONData)
+    if err != nil {
+        return nil, err
+    }
+
+    // 更新字段
+    updates := map[string]interface{}{
+        "name":             cmd.Name,
+        "type":             cmd.Type,
+        "access":           cmd.Access,
+        "url":              cmd.URL,
+        "user":             cmd.User,
+        "database":         cmd.Database,
+        "basic_auth":       cmd.BasicAuth,
+        "basic_auth_user":  cmd.BasicAuthUser,
+        "is_default":       cmd.IsDefault,
+        "json_data":        cmd.JSONData,
+        "secure_json_data": encryptedData,
+        "version":          existing.Version + 1,
+        "updated":          time.Now(),
+    }
+
+    // 如果设置为默认
+    if cmd.IsDefault && !existing.IsDefault {
+        s.db.WithContext(ctx).Model(&datasources.DataSource{}).
+            Where("org_id = ? AND is_default = ? AND id != ?", cmd.OrgID, true, existing.ID).
+            Update("is_default", false)
+    }
+
+    if err := s.db.WithContext(ctx).Model(existing).Updates(updates).Error; err != nil {
+        return nil, err
+    }
+
+    return s.GetDataSource(ctx, &datasources.GetDataSourceQuery{ID: existing.ID, OrgID: cmd.OrgID})
+}
+
+// DeleteDataSource 删除数据源
+func (s *Service) DeleteDataSource(ctx context.Context, cmd *datasources.DeleteDataSourceCommand) error {
+    tx := s.db.WithContext(ctx).Where("org_id = ?", cmd.OrgID)
+
+    if cmd.UID != "" {
+        tx = tx.Where("uid = ?", cmd.UID)
+    } else if cmd.ID != 0 {
+        tx = tx.Where("id = ?", cmd.ID)
+    } else if cmd.Name != "" {
+        tx = tx.Where("name = ?", cmd.Name)
+    } else {
+        return errors.New("UID, ID, or Name is required")
+    }
+
+    result := tx.Delete(&datasources.DataSource{})
+    if result.Error != nil {
+        return result.Error
+    }
+
+    if result.RowsAffected == 0 {
+        return datasources.ErrDataSourceNotFound
+    }
+
+    return nil
+}
+
+// --- 私有方法 ---
+
+func (s *Service) checkUniqueness(ctx context.Context, orgID int64, uid, name string, excludeID int64) error {
+    var count int64
+
+    if uid != "" {
+        tx := s.db.WithContext(ctx).Model(&datasources.DataSource{}).
+            Where("org_id = ? AND uid = ?", orgID, uid)
+        if excludeID != 0 {
+            tx = tx.Where("id != ?", excludeID)
+        }
+        tx.Count(&count)
+        if count > 0 {
+            return datasources.ErrDataSourceUIDExists
+        }
+    }
+
+    if name != "" {
+        tx := s.db.WithContext(ctx).Model(&datasources.DataSource{}).
+            Where("org_id = ? AND name = ?", orgID, name)
+        if excludeID != 0 {
+            tx = tx.Where("id != ?", excludeID)
+        }
+        tx.Count(&count)
+        if count > 0 {
+            return datasources.ErrDataSourceNameExists
+        }
+    }
+
+    return nil
+}
+
+func (s *Service) encryptSecureData(ctx context.Context, data map[string]string) (map[string][]byte, error) {
+    if len(data) == 0 {
+        return nil, nil
+    }
+
+    result := make(map[string][]byte, len(data))
+    for key, value := range data {
+        encrypted, err := s.secretService.Encrypt(ctx, []byte(value))
+        if err != nil {
+            return nil, err
+        }
+        result[key] = encrypted
+    }
+    return result, nil
+}
+
+func generateUID() string {
+    // 简单实现，生产环境建议使用 UUID
+    return fmt.Sprintf("ds-%d", time.Now().UnixNano())
+}
+```
+
+#### 4.7.5 项目结构
+
+```
+pkg/services/datasources/
+├── errors.go           # 错误定义
+├── models.go           # 数据模型和 DTO
+├── service.go          # 服务接口
+└── service/
+    └── datasource_service.go  # GORM 实现
 ```
 
 ---
 
-### 4.8 数据源缓存 (pkg/datasource/cache.go)
+### 4.8 数据源缓存 (pkg/services/datasources/service/cache.go)
 
 ```go
-package datasource
+package service
 
 import (
     "context"
     "fmt"
     "sync"
     "time"
+
+    "your-project/pkg/services/datasources"
 )
 
 const (
     defaultCacheTTL = 5 * time.Second
 )
 
-// CacheService 定义数据源缓存服务接口
-type CacheService interface {
-    // GetByUID 根据 UID 获取数据源（优先从缓存）
-    GetByUID(ctx context.Context, uid string, skipCache bool) (*DataSource, error)
-    
-    // GetByID 根据 ID 获取数据源（优先从缓存）
-    GetByID(ctx context.Context, id int64, skipCache bool) (*DataSource, error)
-    
-    // InvalidateCache 使缓存失效
-    InvalidateCache(uid string)
-}
-
-// Store 定义数据源存储接口（数据库层）
-type Store interface {
-    GetByUID(ctx context.Context, uid string) (*DataSource, error)
-    GetByID(ctx context.Context, id int64) (*DataSource, error)
-}
-
 // cacheEntry 缓存条目
 type cacheEntry struct {
-    ds        *DataSource
+    ds        *datasources.DataSource
     expiresAt time.Time
 }
 
 // Cache 数据源缓存实现
 type Cache struct {
-    store Store
-    ttl   time.Duration
+    dsService *Service  // 底层数据源服务
+    orgID     int64     // 组织 ID（可选）
+    ttl       time.Duration
     
     mu    sync.RWMutex
     cache map[string]*cacheEntry  // key: uid or "id:{id}"
 }
 
 // NewCache 创建数据源缓存
-func NewCache(store Store, ttl time.Duration) *Cache {
+func NewCache(dsService *Service, orgID int64, ttl time.Duration) *Cache {
     if ttl == 0 {
         ttl = defaultCacheTTL
     }
     return &Cache{
-        store: store,
-        ttl:   ttl,
-        cache: make(map[string]*cacheEntry),
+        dsService: dsService,
+        orgID:     orgID,
+        ttl:       ttl,
+        cache:     make(map[string]*cacheEntry),
     }
 }
 
 // GetByUID 根据 UID 获取数据源
-func (c *Cache) GetByUID(ctx context.Context, uid string, skipCache bool) (*DataSource, error) {
+func (c *Cache) GetByUID(ctx context.Context, uid string, skipCache bool) (*datasources.DataSource, error) {
     if !skipCache {
         if ds := c.get(uid); ds != nil {
             return ds, nil
         }
     }
     
-    ds, err := c.store.GetByUID(ctx, uid)
+    ds, err := c.dsService.GetDataSource(ctx, &datasources.GetDataSourceQuery{
+        UID:   uid,
+        OrgID: c.orgID,
+    })
     if err != nil {
         return nil, err
     }
@@ -671,7 +1096,7 @@ func (c *Cache) GetByUID(ctx context.Context, uid string, skipCache bool) (*Data
 }
 
 // GetByID 根据 ID 获取数据源
-func (c *Cache) GetByID(ctx context.Context, id int64, skipCache bool) (*DataSource, error) {
+func (c *Cache) GetByID(ctx context.Context, id int64, skipCache bool) (*datasources.DataSource, error) {
     key := fmt.Sprintf("id:%d", id)
     
     if !skipCache {
@@ -680,7 +1105,10 @@ func (c *Cache) GetByID(ctx context.Context, id int64, skipCache bool) (*DataSou
         }
     }
     
-    ds, err := c.store.GetByID(ctx, id)
+    ds, err := c.dsService.GetDataSource(ctx, &datasources.GetDataSourceQuery{
+        ID:    id,
+        OrgID: c.orgID,
+    })
     if err != nil {
         return nil, err
     }
@@ -697,7 +1125,7 @@ func (c *Cache) InvalidateCache(uid string) {
     delete(c.cache, uid)
 }
 
-func (c *Cache) get(key string) *DataSource {
+func (c *Cache) get(key string) *datasources.DataSource {
     c.mu.RLock()
     defer c.mu.RUnlock()
     
@@ -708,7 +1136,7 @@ func (c *Cache) get(key string) *DataSource {
     return entry.ds
 }
 
-func (c *Cache) set(key string, ds *DataSource) {
+func (c *Cache) set(key string, ds *datasources.DataSource) {
     c.mu.Lock()
     defer c.mu.Unlock()
     
@@ -731,20 +1159,16 @@ import (
     
     "github.com/grafana/grafana-plugin-sdk-go/backend"
     
-    "your-project/pkg/datasource"
     "your-project/pkg/plugins"
     "your-project/pkg/plugins/manager/registry"
+    "your-project/pkg/services/datasources"
 )
 
 // Provider 负责构建插件上下文
-// 职责：
-//   1. 校验插件是否存在
-//   2. 从缓存获取数据源配置
-//   3. 构建插件上下文（包含解密后的数据源配置）
 type Provider struct {
-    registry        registry.Service         // 插件注册表
-    dsCache         datasource.CacheService  // 数据源缓存
-    secretService   SecretService            // 加密服务
+    registry      registry.Service
+    dsCache       datasources.CacheService
+    secretService SecretService
 }
 
 // SecretService 定义解密服务的接口
@@ -752,8 +1176,8 @@ type SecretService interface {
     Decrypt(ctx context.Context, data []byte) ([]byte, error)
 }
 
-// NewProvider 创建一个新的上下文提供者
-func NewProvider(registry registry.Service, dsCache datasource.CacheService, secretService SecretService) *Provider {
+// NewProvider 创建插件上下文提供者
+func NewProvider(registry registry.Service, dsCache datasources.CacheService, secretService SecretService) *Provider {
     return &Provider{
         registry:      registry,
         dsCache:       dsCache,
@@ -761,18 +1185,15 @@ func NewProvider(registry registry.Service, dsCache datasource.CacheService, sec
     }
 }
 
-// GetWithDataSource 构建包含数据源配置的插件上下文
-func (p *Provider) GetWithDataSource(ctx context.Context, pluginID string, ds *datasource.DataSource) (backend.PluginContext, error) {
-    // 1. 校验插件是否存在
+// GetWithDataSource 构建插件上下文
+func (p *Provider) GetWithDataSource(ctx context.Context, pluginID string, ds *datasources.DataSource) (backend.PluginContext, error) {
     _, exists := p.registry.Plugin(ctx, pluginID)
     if !exists {
         return backend.PluginContext{}, plugins.ErrPluginNotRegistered
     }
     
-    // 2. 解密敏感数据
     decryptedData := p.decryptSecureData(ctx, ds)
     
-    // 3. 构建上下文
     return backend.PluginContext{
         PluginID: pluginID,
         DataSourceInstanceSettings: &backend.DataSourceInstanceSettings{
@@ -789,9 +1210,9 @@ func (p *Provider) GetWithDataSource(ctx context.Context, pluginID string, ds *d
     }, nil
 }
 
-// GetDataSourceInstanceSettings 根据 UID 获取数据源配置（使用缓存）
+// GetDataSourceInstanceSettings 根据 UID 获取数据源配置
 func (p *Provider) GetDataSourceInstanceSettings(ctx context.Context, uid string) (*backend.DataSourceInstanceSettings, error) {
-    ds, err := p.dsCache.GetByUID(ctx, uid, false)  // 使用缓存
+    ds, err := p.dsCache.GetByUID(ctx, uid, false)
     if err != nil {
         return nil, err
     }
@@ -811,10 +1232,8 @@ func (p *Provider) GetDataSourceInstanceSettings(ctx context.Context, uid string
     }, nil
 }
 
-// decryptSecureData 解密数据源的敏感数据
-func (p *Provider) decryptSecureData(ctx context.Context, ds *datasource.DataSource) map[string]string {
+func (p *Provider) decryptSecureData(ctx context.Context, ds *datasources.DataSource) map[string]string {
     result := make(map[string]string)
-    
     for key, encryptedValue := range ds.SecureJSONData {
         decrypted, err := p.secretService.Decrypt(ctx, encryptedValue)
         if err != nil {
@@ -822,7 +1241,6 @@ func (p *Provider) decryptSecureData(ctx context.Context, ds *datasource.DataSou
         }
         result[key] = string(decrypted)
     }
-    
     return result
 }
 ```
@@ -839,23 +1257,23 @@ import (
     
     "github.com/grafana/grafana-plugin-sdk-go/backend"
     
-    "your-project/pkg/datasource"
     "your-project/pkg/plugins/manager/client"
+    "your-project/pkg/services/datasources"
     "your-project/pkg/services/plugincontext"
 )
 
-// Service 是查询服务的实现
+// Service 查询服务
 type Service struct {
     pluginClient    *client.Service
     contextProvider *plugincontext.Provider
-    dsCache         datasource.CacheService  // 使用缓存
+    dsCache         datasources.CacheService
 }
 
 // NewService 创建查询服务
 func NewService(
     pluginClient *client.Service,
     contextProvider *plugincontext.Provider,
-    dsCache datasource.CacheService,
+    dsCache datasources.CacheService,
 ) *Service {
     return &Service{
         pluginClient:    pluginClient,
@@ -866,19 +1284,16 @@ func NewService(
 
 // QueryData 执行数据查询
 func (s *Service) QueryData(ctx context.Context, datasourceUID string, queries []backend.DataQuery) (*backend.QueryDataResponse, error) {
-    // 1. 从缓存获取数据源配置
     ds, err := s.dsCache.GetByUID(ctx, datasourceUID, false)
     if err != nil {
         return nil, fmt.Errorf("failed to get datasource: %w", err)
     }
     
-    // 2. 构建插件上下文
     pCtx, err := s.contextProvider.GetWithDataSource(ctx, ds.Type, ds)
     if err != nil {
         return nil, err
     }
     
-    // 3. 执行查询
     return s.pluginClient.QueryData(ctx, &backend.QueryDataRequest{
         PluginContext: pCtx,
         Queries:       queries,
@@ -900,36 +1315,54 @@ import (
     "log"
     "time"
     
+    "gorm.io/driver/mysql"
+    "gorm.io/gorm"
+    
     "your-project/pkg/plugins/manager/registry"
     "your-project/pkg/plugins/manager/client"
     "your-project/pkg/plugins/backendplugin/coreplugin"
     "your-project/pkg/services/plugincontext"
-    "your-project/pkg/datasource"
+    "your-project/pkg/services/datasources"
+    dsservice "your-project/pkg/services/datasources/service"
     "your-project/pkg/query"
 )
 
 func main() {
     ctx := context.Background()
     
-    // 1. 创建插件注册表
-    pluginRegistry := registry.NewInMemory()
+    // 1. 初始化数据库（GORM v2）
+    dsn := "user:pass@tcp(127.0.0.1:3306)/dbname?parseTime=true"
+    db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+    if err != nil {
+        log.Fatal(err)
+    }
     
-    // 2. 创建插件客户端
-    pluginClient := client.ProvideService(pluginRegistry)
+    // 自动迁移
+    db.AutoMigrate(&datasources.DataSource{})
+    
+    // 2. 创建数据源服务
+    dsService := dsservice.NewService(db, secretService)
     
     // 3. 创建数据源缓存（TTL 5秒）
-    dsCache := datasource.NewCache(dsStore, 5*time.Second)
+    dsCache := dsservice.NewCache(dsService, 1, 5*time.Second)  // orgID=1
     
-    // 4. 创建上下文提供者
+    // 4. 创建插件注册表
+    pluginRegistry := registry.NewInMemory()
+    
+    // 5. 创建插件客户端
+    pluginClient := client.ProvideService(pluginRegistry)
+    
+    // 6. 创建上下文提供者
     contextProvider := plugincontext.NewProvider(pluginRegistry, dsCache, secretService)
     
-    // 5. 创建查询服务
+    // 7. 创建查询服务
     queryService := query.NewService(pluginClient, contextProvider, dsCache)
     
-    // 6. 注册插件
+    // 8. 注册插件
     registerPlugins(ctx, pluginRegistry)
     
     log.Println("Service started")
+    _ = queryService
 }
 
 func registerPlugins(ctx context.Context, reg registry.Service) {
