@@ -4,6 +4,42 @@
 
 `errutil` 是 Grafana 的统一错误处理工具包，为开发者、系统管理员和最终用户提供结构化的错误信息管理。它将静态错误信息（错误类别、状态码、日志级别）与动态错误信息（具体上下文、错误原因）相结合，实现标准化的错误处理流程。
 
+## 为什么不用普通 error？
+
+### 普通 error 的问题
+
+```go
+// 普通 error
+return fmt.Errorf("user %s not found, internal id: %d", uid, internalID)
+// 问题：
+// 1. 调用方如何知道是 404？需要字符串匹配
+// 2. 日志和用户消息混在一起
+// 3. internalID 可能暴露给用户
+```
+
+### errutil 解决的问题
+
+| 问题 | 普通 error | errutil |
+|------|-----------|---------|
+| HTTP 状态码 | 手动判断/字符串匹配 | 自动映射 |
+| 日志 vs 用户消息 | 混在一起 | 分离（LogMessage vs PublicMessage）|
+| 敏感信息泄露 | 容易暴露 | `Public()` 只返回安全信息 |
+| 错误分类 | 无标准 | MessageID 结构化 |
+| K8s 集成 | 需要转换 | 直接实现 APIStatus |
+| 国际化 | 不支持 | 模板 + PublicPayload |
+
+### 对比示例
+
+```go
+// ❌ 普通 error - 调用方不知道状态码，敏感信息可能泄露
+return fmt.Errorf("user not found, db: mysql://root:password@...")
+
+// ✅ errutil - 自动 404，日志和用户消息分离
+return errNotFound.Errorf("user %s not found, db error: %v", uid, dbErr)
+// LogMessage (日志): "user abc123 not found, db error: connection refused"
+// PublicMessage (用户): "用户不存在"
+```
+
 ## 核心特性
 
 - **静态与动态信息分离**：通过 `Base` 定义错误类别，通过 `Error` 携带运行时信息
