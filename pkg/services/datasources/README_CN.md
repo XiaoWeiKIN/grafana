@@ -388,6 +388,26 @@ func ProvideService(
 ) (*Service, error)
 ```
 
+### DataSourceRetriever 抽象
+
+`DataSourceRetriever` 接口的引入主要为了解决 **循环依赖 (Circular Dependencies)** 和提供 **接口抽象**。
+
+1.  **解决循环依赖**：
+    - `DatasourceService` 依赖 `AccessControl` 进行权限检查。
+    - `AccessControl` 的 `ScopeAttributeResolver` 需要查询数据源信息来解析 Scope（例如将 Name 解析为 UID）。
+    - 如果 Resolver 直接依赖 `DatasourceService`，就会形成 `Service -> AccessControl -> Service` 的循环依赖。
+    - 通过引入 `DataSourceRetriever`，Resolver 只依赖该接口（通常由 `SqlStore` 实现），从而打破循环。
+
+2.  **接口定义**：
+
+```go
+// DataSourceRetriever interface for retrieving a datasource.
+type DataSourceRetriever interface {
+	GetDataSource(ctx context.Context, query *datasources.GetDataSourceQuery) (*datasources.DataSource, error)
+	GetDataSourceInNamespace(ctx context.Context, namespace, name, group string) (*datasources.DataSource, error)
+}
+```
+
 ### 核心方法实现
 
 #### 添加数据源
