@@ -10,32 +10,32 @@
 
 ## 一、架构概览
 
+遵循 Grafana 的核心设计，我们将插件系统分为 **元数据管理（Metadata Store）** 和 **后端执行管理（Execution Registry）** 两部分。
+
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Query Service                            │
-│              (接收查询请求，协调各组件工作)                         │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │
-              ┌────────────────┴────────────────┐
-              ▼                                 ▼
-┌──────────────────────────┐      ┌──────────────────────────────┐
-│  PluginContext Provider  │      │        Plugin Client          │
-│   (构建插件执行上下文)     │      │   (调用插件执行查询)           │
-└──────────────────────────┘      └──────────────┬───────────────┘
-                                                 │
-                                                 ▼
-                               ┌─────────────────────────────────┐
-                               │         Plugin Registry          │
-                               │   (存储所有已注册的插件)           │
-                               │    map[pluginID] → Plugin        │
-                               └──────────────┬──────────────────┘
-                                              │
-                        ┌─────────────────────┼─────────────────────┐
-                        ▼                     ▼                     ▼
-                 ┌────────────┐        ┌────────────┐        ┌────────────┐
-                 │   MySQL    │        │ Prometheus │        │ ClickHouse │
-                 │   Plugin   │        │   Plugin   │        │   Plugin   │
-                 └────────────┘        └────────────┘        └────────────┘
+                       ┌──────────────────────────┐
+                       │      Query Service       │
+                       └────────────┬─────────────┘
+                                    │
+              ┌─────────────────────┴─────────────────────┐
+              ▼                                           ▼
+┌──────────────────────────┐                ┌────────────────────────────┐
+│      Plugin Store        │                │       Plugin Client        │
+│   (元数据/类型验证/别名)  │                │    (路由并调用后端插件)    │
+└─────────────┬────────────┘                └─────────────┬──────────────┘
+              │                                           │
+              │                                           ▼
+              │                             ┌────────────────────────────┐
+              │                             │      Plugin Registry       │
+              └────────────────────────────▶│    (后端执行实例管理集)    │
+                                            └─────────────┬──────────────┘
+                                                          │
+                                    ┌─────────────────────┼─────────────────────┐
+                                    ▼                     ▼                     ▼
+                             ┌────────────┐        ┌────────────┐        ┌────────────┐
+                             │   MySQL    │        │ Prometheus │        │ Clickhouse │
+                             │   Plugin   │        │   Plugin   │        │   Plugin   │
+                             └────────────┘        └────────────┘        └────────────┘
 ```
 
 ---
@@ -72,19 +72,24 @@ pkg/
 ├── plugins/
 │   ├── errors.go                    # 插件错误定义
 │   ├── backendplugin/
-│   │   ├── ifaces.go                # 插件接口定义
+│   │   ├── ifaces.go                # 插件接口定义 (Execution)
 │   │   └── coreplugin/
 │   │       └── core_plugin.go       # 内置插件实现
 │   │
 │   └── manager/
 │       ├── registry/
-│       │   ├── registry.go          # 注册表接口
+│       │   ├── registry.go          # 注册表接口 (Execution Registry)
 │       │   └── in_memory.go         # 内存注册表实现
 │       │
 │       └── client/
-│           └── client.go            # 插件客户端
+│           └── client.go            # 插件客户端 (Route to Registry)
 │
 ├── services/
+│   ├── pluginsintegration/
+│   │   ├── pluginstore/
+│   │   │   └── store.go             # 插件元数据存储 (Metadata Store)
+│   │   └── plugincontext/
+│   │       └── provider.go          # 插件上下文提供者
 │   ├── datasources/                 # 数据源服务
 │   │   ├── errors.go                # 错误定义
 │   │   ├── models.go                # 数据模型和 DTO
@@ -92,9 +97,6 @@ pkg/
 │   │   └── service/
 │   │       ├── datasource_service.go    # GORM 实现
 │   │       └── cache.go                 # 缓存实现
-│   │
-│   └── plugincontext/
-│       └── provider.go              # 插件上下文提供者
 │
 └── query/
     └── service.go                   # 查询服务
@@ -103,6 +105,33 @@ pkg/
 ---
 
 ## 四、完整代码实现
+
+### 4.1 插件元数据存储 (pkg/services/pluginsintegration/pluginstore/store.go)
+
+```go
+package pluginstore
+
+import (
+	"context"
+
+	"your-project/pkg/plugins/backendplugin"
+)
+
+// Store 是插件元数据的公开存储接口
+type Store interface {
+	// Plugin 根据 ID 查找插件元数据
+	Plugin(ctx context.Context, pluginID string) (PluginMetadata, bool)
+	// Plugins 返回指定类型的插件
+	Plugins(ctx context.Context, pluginTypes ...string) []PluginMetadata
+}
+
+type PluginMetadata struct {
+	ID       string
+	Name     string
+	Type     string
+	AliasIDs []string
+}
+```
 
 ### 4.1 错误定义 (pkg/plugins/errors.go)
 
@@ -457,12 +486,14 @@ var (
 // Service 实现了 plugins.Client 接口
 type Service struct {
     pluginRegistry registry.Service
+    pluginStore    pluginstore.Store // 可选：用于增强验证
 }
 
 // ProvideService 创建插件客户端服务（用于依赖注入）
-func ProvideService(pluginRegistry registry.Service) *Service {
+func ProvideService(pluginRegistry registry.Service, pluginStore pluginstore.Store) *Service {
     return &Service{
         pluginRegistry: pluginRegistry,
+        pluginStore:    pluginStore,
     }
 }
 
@@ -1149,7 +1180,7 @@ func (c *Cache) set(key string, ds *datasources.DataSource) {
 
 ---
 
-### 4.9 插件上下文提供者 (pkg/services/plugincontext/provider.go)
+### 4.9 插件上下文提供者 (pkg/services/pluginsintegration/plugincontext/provider.go)
 
 ```go
 package plugincontext
@@ -1259,7 +1290,7 @@ import (
     
     "your-project/pkg/plugins/manager/client"
     "your-project/pkg/services/datasources"
-    "your-project/pkg/services/plugincontext"
+    "your-project/pkg/services/pluginsintegration/plugincontext"
 )
 
 // Service 查询服务
@@ -1321,7 +1352,7 @@ import (
     "your-project/pkg/plugins/manager/registry"
     "your-project/pkg/plugins/manager/client"
     "your-project/pkg/plugins/backendplugin/coreplugin"
-    "your-project/pkg/services/plugincontext"
+    "your-project/pkg/services/pluginsintegration/plugincontext"
     "your-project/pkg/services/datasources"
     dsservice "your-project/pkg/services/datasources/service"
     "your-project/pkg/query"
@@ -1346,11 +1377,15 @@ func main() {
     // 3. 创建数据源缓存（TTL 5秒）
     dsCache := dsservice.NewCache(dsService, 1, 5*time.Second)  // orgID=1
     
-    // 4. 创建插件注册表
+    // 4. 创建插件元数据存储 (Store)
+    // 实际项目中可能从文件系统加载 JSON，这里简化为内存
+    pluginStore := pluginstore.NewInMemory() 
+    
+    // 5. 创建插件后端注册表 (Registry)
     pluginRegistry := registry.NewInMemory()
     
-    // 5. 创建插件客户端
-    pluginClient := client.ProvideService(pluginRegistry)
+    // 6. 创建插件客户端
+    pluginClient := client.ProvideService(pluginRegistry, pluginStore)
     
     // 6. 创建上下文提供者
     contextProvider := plugincontext.NewProvider(pluginRegistry, dsCache, secretService)
@@ -1444,10 +1479,11 @@ func (h *MySQLHandler) executeQuery(ctx context.Context, db *sql.DB, q backend.D
 
 | 组件 | 职责 |
 |-----|------|
-| **Plugin 接口** | 定义插件必须实现的方法 |
+| **Plugin 接口** | 定义插件必须实现的方法（包含执行逻辑与元数据访问） |
+| **Plugin Store** | 插件元数据的单一事实来源。负责插件类型验证、别名（AliasIDs）管理，支持前端与后端插件。 |
+| **Plugin Registry** | 存储和管理所有已注册的可用**后端执行实例**。 |
 | **corePlugin** | 内置插件的通用实现，封装具体的 Handler |
-| **Registry** | 存储和管理所有已注册的插件 |
-| **Client** | 查询服务与插件之间的桥梁，负责路由请求 |
+| **Client** | 查询服务与插件执行引擎之间的桥梁，负责根据元数据路由请求到 Registry。 |
 | **PluginContext Provider** | 构建插件执行所需的上下文信息 |
 | **QueryService** | 接收外部查询请求，协调各组件完成查询 |
 
