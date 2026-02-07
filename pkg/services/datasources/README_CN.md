@@ -513,6 +513,25 @@ func (s *Service) prepareInstanceSettings(ctx context.Context,
 }
 ```
 
+### 🔌 插件集成
+
+`DataSourceService` 依赖两个关键组件与插件系统交互，分别负责静态元数据和动态行为：
+
+#### 1. PluginStore (静态注册表)
+- **字段**: `pluginStore pluginstore.Store`
+- **职责**: 只读的插件元数据存储。
+- **用途**:
+    - **存在性检查**: 在创建/更新数据源时，验证 `Type` 是否对应已安装的合法插件。
+    - **别名解析**: 获取插件别名（Aliases），确保存储层能通过新旧 ID 查找到数据源。
+
+#### 2. PluginClient (动态客户端)
+- **字段**: `pluginClient plugins.Client`
+- **职责**: 与运行中的插件后端进程通信。
+- **用途**:
+    - **准入控制 (Admission Control)**: 调用插件的 `ValidateAdmission` 和 `MutateAdmission` 方法。
+    - **配置验证**: 允许插件后端校验用户输入的配置（如 URL、Token 格式）。
+    - **配置修正**: 允许插件自动修正配置数据后再存入数据库。
+
 ---
 
 ## 💾 存储层
