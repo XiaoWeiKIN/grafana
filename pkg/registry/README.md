@@ -104,17 +104,54 @@ Grafana 正在引入 `dskit/services`（源自 Grafana Mimir/Cortex）来实现�
 ### 总结
 
 `registry/apis` 是 Grafana **下一代 API 架构** 的孵化器。它允许 Grafana 内部像开发 Kubernetes Operator 一样开发核心功能，拥有版本化、声明式 API、准入控制等高级特性，同时通过 Dual Write 机制保持对旧版 SQL 存储的兼容。
-这一层也称为 `appregistry`，它看起来是 Grafana 内部向“云原生/Kubernetes 模式”演进的一部分。
 
-- **基于 SDK**: 这里的代码大量使用了 `github.com/grafana/grafana-app-sdk`，表明这些“Apps”是基于新的 App SDK 构建的。
-- **类 K8s 模式**: 包含了 `APIGroupRunner` 和 `k8s.io/client-go` 的引用，说明这些应用可能在内部模拟了 Kubernetes 的 Operator/Controller 模式（即使在非 K8s 环境下）。
-- **动态特性**: 通过 `ProvideAppInstallers`，根据 Feature Toggles 动态加载不同的功能模块（如 `Alerting Rules`, `Live`, `Correlations` 等）。
+### 4. 应用扩展 (`apps/`)
+这一层也称为 `appregistry`，它负责集成 Grafana 的高层功能模块（即 "Apps"）。
+
+- **基于 App SDK**: 这里的代码大量使用了 `github.com/grafana/grafana-app-sdk`，表明这些应用是按照 Grafana 的新应用架构规范构建的。
+- **声明式注册**: 通过 `ProvideAppInstallers` 函数，根据 Feature Toggles 动态加载不同的功能模块。
+
+---
+
+## `registry/apps` 详细解读
+
+`pkg/registry/apps` 是 Grafana **功能模块化** 的核心。它不仅定义了应用如何启动，还负责处理新老架构的平滑过渡。
+
+### 核心设计概念
+
+1.  **AppInstaller 模式**
+    每个子模块（如 `alerting`, `playlist`, `live`）都提供一个 `AppInstaller`。这个 Installer 负责：
+    *   **API 注册**: 定义该应用在 K8s 风格 API Server 中的 GVR（组/版本/资源）。
+    *   **业务初始化**: 调用该模块特有的 Service（如 `playlistsvc.Service`）进行初始化。
+
+2.  **Legacy 兼容性 (Legacy Storage)**
+    这是 `apps` 目录中最关键的设计点。由于 Grafana 正在从 SQL 存储转向统一资源存储 (Unified Storage)，许多新应用（基于 App SDK）仍需操作旧的数据库表。
+    *   **双向存储**: `AppInstaller` 同时也实现了 `LegacyStorageProvider` 接口。
+    *   **适配器**: 在子目录中（如 `playlist/legacy_storage.go`），它定义了如何将 K8s 风格的 REST 请求转换为对旧有 SQL Service 的调用。
+
+### 注册与执行流
+
+1.  **依赖注入**: `wireset.go` 收集所有子模块的 `AppInstaller`。
+2.  **集合构建**: `apps.go` 中的 `ProvideAppInstallers` 根据当前开启的 Feature Flags，挑选出一组活跃的 Installers。
+3.  **Runner 启动**:
+    *   `appregistry.Service` 作为一个后台服务被启动。
+    *   它持有一个 `APIGroupRunner`，该 Runner 会遍历所有的 Installers。
+    *   每个 Installer 会将其对应的 API 组和存储逻辑（包括 Legacy 存储）注册到全局的 API Server 中。
+
+### 5. 使用统计注册 (`usagestatssvcs/`)
+负责收集各个服务的使用情况统计信息。
+
+- **`ProvidesUsageStats`**: 这是一个契约，任何想要报告使用指标的服务都需要实现 `GetUsageStats()` 方法。
+- **自动化收集**: `UsageStatsProvidersRegistry` 将这些分散的服务收集起来。Grafana 的全局 `UsageStatsService` 会定期遍历这些 Provider，汇总数据并上报（如果启用了遥测）。
+
+---
 
 ## 总结
 
-如果你想理解：
-1. **Grafana 启动时到底运行了哪些后台进程？** -> 请看 `registry/backgroundsvcs`。
-2. **各个模块的 API 是如何注册到 HTTP Server 的？** -> 请看 `registry/apis`。
-3. **新的 App SDK 是如何集成进主程序的？** -> 请看 `registry/apps`。
+`pkg/registry` 是 Grafana 架构中的“中央总线”。它不涉及具体的业务实现，但通过以下三个维度将整个系统粘合在一起：
 
-`pkg/registry` 是理解 Grafana 宏观架构依赖关系的最佳入口。
+1.  **生命周期维度 (`backgroundsvcs`)**: 确保服务能按正确的顺序启动和优雅关闭。
+2.  **访问接口维度 (`apis` & `apps`)**: 使用现代的、声明式的 Kubernetes API 风格对外暴露功能。
+3.  **观测维度 (`usagestatssvcs`)**: 统一收集各组件的运行指标。
+
+理解了这个目录，就理解了 Grafana 作为一个复杂的单体应用是如何在宏观上进行装配和运转的。
